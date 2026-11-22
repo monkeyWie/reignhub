@@ -14,16 +14,17 @@ import (
 const Audience = "reign-connect-v1"
 
 type Grant struct {
-	Audience  string   `json:"aud"`
-	Namespace string   `json:"namespace"`
-	HostID    string   `json:"hostId"`
-	DeviceID  string   `json:"deviceId"`
-	Role      string   `json:"role"`
-	Scopes    []string `json:"scopes"`
-	Products  []string `json:"products"`
-	IssuedAt  int64    `json:"iat"`
-	ExpiresAt int64    `json:"exp"`
-	ID        string   `json:"jti"`
+	RelayUsageURL string   `json:"relayUsageUrl,omitempty"`
+	Audience      string   `json:"aud"`
+	Namespace     string   `json:"namespace"`
+	HostID        string   `json:"hostId"`
+	DeviceID      string   `json:"deviceId"`
+	Role          string   `json:"role"`
+	Scopes        []string `json:"scopes"`
+	Products      []string `json:"products"`
+	IssuedAt      int64    `json:"iat"`
+	ExpiresAt     int64    `json:"exp"`
+	ID            string   `json:"jti"`
 }
 
 func Sign(key ed25519.PrivateKey, g Grant) (string, error) {

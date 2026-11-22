@@ -34,6 +34,7 @@ type Pairing struct {
 	logical                 string
 }
 type frame struct {
+	Probe      bool   `json:"probe,omitempty"`
 	AllowRelay bool   `json:"allowRelay"`
 	Peer       string `json:"peer"`
 	Kind       string `json:"kind"`
@@ -498,7 +499,8 @@ func (c *Client) aad(kind string, out bool) string {
 	}
 	return "reign/p2p/" + c.id + "/" + direction + "/" + kind
 }
-func (c *Client) relaySend(kind string, b []byte) error {
+func (c *Client) relaySend(kind string, b []byte) error { return c.relayFrame(kind, b, false) }
+func (c *Client) relayFrame(kind string, b []byte, probe bool) error {
 	c.mu.Lock()
 	crypto := c.crypto
 	if kind == "hello" {
@@ -512,12 +514,16 @@ func (c *Client) relaySend(kind string, b []byte) error {
 	if e != nil {
 		return e
 	}
-	raw, _ := json.Marshal(frame{Peer: c.id, Kind: kind, Body: packet})
+	raw, _ := json.Marshal(frame{Peer: c.id, Kind: kind, Body: packet, Probe: probe})
 	ctx, cancel := context.WithTimeout(c.ctx, 10*time.Second)
 	defer cancel()
 	if c.node != nil {
 		if kind == "chunk" {
-			return c.node.Send(ctx, 0, append([]byte{1}, packet...))
+			record := byte(1)
+			if probe {
+				record = 3
+			}
+			return c.node.Send(ctx, 0, append([]byte{record}, packet...))
 		}
 		return c.node.Send(ctx, 0, append([]byte{2}, raw...))
 	}
@@ -927,14 +933,14 @@ func (c *Client) send(ctx context.Context, requestID, method string, raw []byte)
 	transfer := id()
 	for i := 0; i < count; i++ {
 		part, _ := json.Marshal(chunk{Request: requestID, ID: transfer, Index: i, Total: count, Encoding: encoding, RawSize: rawSize, Data: raw[i*transport.ChunkSize : min(len(raw), (i+1)*transport.ChunkSize)]})
-		if err := c.sender.Send(ctx, c.ctx, priority, func() error { return c.sendPart(part, pc, crypto, direct) }); err != nil {
+		if err := c.sender.Send(ctx, c.ctx, priority, func() error { return c.sendPart(part, pc, crypto, direct, transport.IsProbe(method)) }); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (c *Client) sendPart(part []byte, pc peer, crypto *cryptor, direct bool) (sendErr error) {
+func (c *Client) sendPart(part []byte, pc peer, crypto *cryptor, direct, probe bool) (sendErr error) {
 	defer func() {
 		if sendErr == nil {
 			c.meter.Sent(len(part))
@@ -950,7 +956,7 @@ func (c *Client) sendPart(part []byte, pc peer, crypto *cryptor, direct bool) (s
 		}
 	} else if c.p.directOnly {
 		return errors.New("直连已断开")
-	} else if e := c.relaySend("chunk", part); e != nil {
+	} else if e := c.relayFrame("chunk", part, probe); e != nil {
 		return e
 	}
 	return nil

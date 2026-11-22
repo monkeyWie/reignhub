@@ -138,6 +138,7 @@ func (r *rendezvous) serve(ctx, setup context.Context, l *nativepath.Link, secre
 	r.mu.Unlock()
 	defer func() { r.mu.Lock(); delete(r.admitted, l); r.mu.Unlock() }()
 	leg := admittedLeg{link: l}
+	var usage *relayUsage
 	if req.Issuer != "" {
 		pub, err := base64.RawURLEncoding.DecodeString(req.Issuer)
 		if err != nil || len(pub) != ed25519.PublicKeySize {
@@ -148,6 +149,10 @@ func (r *rendezvous) serve(ctx, setup context.Context, l *nativepath.Link, secre
 			return
 		}
 		defer leg.lease.stop()
+		if req.Op == "connect" && leg.lease.usageURL != "" {
+			usage = &relayUsage{http: usageHTTP, url: leg.lease.usageURL, signer: signer, invite: i, holder: ID()}
+			defer usage.release(ctx)
+		}
 	}
 	hostKey := req.Namespace + "/" + i.Host
 	meetingKey := req.Namespace + "/" + i.Peer
@@ -229,7 +234,20 @@ func (r *rendezvous) serve(ctx, setup context.Context, l *nativepath.Link, secre
 		var wg sync.WaitGroup
 		forward := func(src admittedLeg, dst *nativepath.Link) {
 			defer dst.Close()
-			src.receive(func(lane byte, b []byte) error { return dst.Send(ctx, lane, b) })
+			src.receive(func(lane byte, b []byte) error {
+				if len(b) == 1 && b[0] == 4 && src.link == leg.link {
+					if usage != nil {
+						usage.release(ctx)
+					}
+					return nil
+				}
+				if usage != nil {
+					if err := usage.admit(ctx, b); err != nil {
+						return err
+					}
+				}
+				return dst.Send(ctx, lane, b)
+			})
 		}
 		wg.Go(func() { forward(other, l) })
 		forward(leg, other.link)
@@ -328,6 +346,7 @@ func (a admittedLeg) receive(forward func(byte, []byte) error) {
 }
 
 type nodeLease struct {
+	usageURL                      string
 	key                           ed25519.PublicKey
 	namespace, host, device, role string
 	mu                            sync.Mutex
@@ -344,6 +363,9 @@ func (n *nodeLease) renew(ticket string) error {
 	}
 	n.mu.Lock()
 	defer n.mu.Unlock()
+	if n.until != 0 && n.usageURL != g.RelayUsageURL {
+		return errors.New("operator changed during session")
+	}
 	if n.timer != nil {
 		if n.until <= now.Unix() {
 			return errors.New("operator grant expired")
@@ -355,6 +377,7 @@ func (n *nodeLease) renew(ticket string) error {
 			return errors.New("operator grant expired")
 		}
 	}
+	n.usageURL = g.RelayUsageURL
 	n.until = g.ExpiresAt
 	n.timer = time.AfterFunc(time.Until(time.Unix(n.until, 0)), n.close)
 	return nil

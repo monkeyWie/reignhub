@@ -21,11 +21,16 @@ func authorizationFailure(id string, err error) control.Response {
 }
 
 func (w *wire) authorize(host, device string, req control.Request) error {
+	// Production hosts authenticate the handshake with this local device key.
+	// Recheck it for every message and outgoing fragment, including detached P2P.
+	if w.opts.ResolveKey != nil {
+		if key, ok := w.opts.ResolveKey(device); !ok || key != w.key {
+			return errConnectionAuthorization
+		}
+		return nil
+	}
 	w.grantMu.RLock()
 	ticket := w.grant
-	if w.offlineGrant != "" {
-		ticket = w.offlineGrant
-	}
 	w.grantMu.RUnlock()
 	return w.authorizeTicket(ticket, host, device, req)
 }

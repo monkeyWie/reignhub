@@ -407,9 +407,6 @@ describe("device authorization and separated ingress", () => {
         ws.serializeAttachment(attachment);
       }
     });
-    const closed = new Promise<CloseEvent>((resolve) =>
-      client.addEventListener("close", resolve, { once: true }),
-    );
     data.send(
       JSON.stringify({
         peer: cw.peer,
@@ -417,7 +414,9 @@ describe("device authorization and separated ingress", () => {
         body: "encrypted late response",
       }),
     );
-    expect((await closed).code).toBe(1008);
+    // A late data reply cannot retire a P2P candidate's signal socket.
+    client.send(JSON.stringify({ kind: "renew" }));
+    expect((await message(client)).kind).toBe("lease");
     expect(host.readyState).toBe(WebSocket.OPEN);
     expect(data.readyState).toBe(WebSocket.OPEN);
     const replacement = (await socket(h.id, c.token, "client")).webSocket!;
@@ -493,7 +492,9 @@ describe("device authorization and separated ingress", () => {
       data.addEventListener("close", resolve, { once: true }),
     );
     data.send(JSON.stringify({ kind: "chunk", body: "opaque" }));
-    expect((await closed).code).toBe(1008);
+    // A late data reply cannot retire a P2P candidate's signal socket.
+    client.send(JSON.stringify({ kind: "renew" }));
+    expect((await message(client)).kind).toBe("lease");
     expect(host.readyState).toBe(WebSocket.OPEN);
     expect(client.readyState).toBe(WebSocket.OPEN);
     host.close();

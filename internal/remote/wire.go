@@ -23,6 +23,7 @@ import (
 )
 
 type Options struct {
+	AccountRemoved    func(client, binding string) `json:"-"`
 	directOnly        bool
 	logicalID         string
 	status            *HostStatus
@@ -61,7 +62,6 @@ type wire struct {
 	relayLink        *relayLink
 	grantMu          sync.RWMutex
 	grant            string
-	offlineGrant     string
 	crypto           *cryptor
 	base             *cryptor
 	key, clientNonce string
@@ -397,7 +397,11 @@ func (w *wire) sendPart(ctx context.Context, part []byte, priority transport.Pri
 		if priority == transport.Bulk {
 			lane = 1
 		}
-		err = w.independent.link.Send(ctx, lane, append([]byte{1}, sealed...))
+		kind := byte(1)
+		if transport.ProbeContext(ctx) {
+			kind = 3
+		}
+		err = w.independent.link.Send(ctx, lane, append([]byte{kind}, sealed...))
 		if err != nil {
 			w.independent.link.Close()
 		}
@@ -409,7 +413,7 @@ func (w *wire) sendPart(ctx context.Context, part []byte, priority transport.Pri
 			return errors.New("中继暂不可用，请等待连接恢复后刷新")
 		}
 		w.progress("path:relay", "relay", "正在使用 WebSocket 中继", "数据通过信令服务的 WebSocket 中继端到端加密传输", "success")
-		frame, _ := json.Marshal(relay.Frame{Peer: w.peer, Kind: "chunk", Body: sealed})
+		frame, _ := json.Marshal(relay.Frame{Peer: w.peer, Kind: "chunk", Probe: transport.ProbeContext(ctx), Body: sealed})
 		sendCtx, cancel := context.WithTimeout(w.ctx, 10*time.Second)
 		err := socket.Write(sendCtx, websocket.MessageText, frame)
 		cancel()

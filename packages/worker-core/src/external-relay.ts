@@ -77,7 +77,7 @@ export function externalRelays(env: CoreEnv) {
   });
 }
 
-export async function enrollNode(
+export async function enrollNodes(
   env: CoreEnv,
   namespace: string,
   issuer: string,
@@ -87,32 +87,38 @@ export async function enrollNode(
   grant: string,
 ) {
   const nodes = externalRelays(env);
-  if (!nodes.length) return;
-  const node = nodes[parseInt(host.slice(0, 8), 16) % nodes.length];
-  const key = await crypto.subtle.importKey(
-    "raw",
-    un64(node.secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
+  if (!nodes.length) return [];
+  const offset = parseInt(host.slice(0, 8), 16) % nodes.length;
+  const count = issuer ? Math.min(3, nodes.length) : 1;
+  return Promise.all(
+    Array.from({ length: count }, async (_, idx) => {
+      const node = nodes[(offset + idx) % nodes.length];
+      const key = await crypto.subtle.importKey(
+        "raw",
+        un64(node.secret),
+        { name: "HMAC", hash: "SHA-256" },
+        false,
+        ["sign"],
+      );
+      const proof = await crypto.subtle.sign(
+        "HMAC",
+        key,
+        new TextEncoder().encode(
+          ["reign-member-v2", namespace, issuer, host, device, role].join("."),
+        ),
+      );
+      return {
+        ...node.endpoint,
+        namespace,
+        issuer: issuer || undefined,
+        grant: issuer ? grant : undefined,
+        host,
+        device,
+        role,
+        key: Array.from(new Uint8Array(proof), (b) =>
+          b.toString(16).padStart(2, "0"),
+        ).join(""),
+      };
+    }),
   );
-  const proof = await crypto.subtle.sign(
-    "HMAC",
-    key,
-    new TextEncoder().encode(
-      ["reign-member-v2", namespace, issuer, host, device, role].join("."),
-    ),
-  );
-  return {
-    ...node.endpoint,
-    namespace,
-    issuer: issuer || undefined,
-    grant: issuer ? grant : undefined,
-    host,
-    device,
-    role,
-    key: Array.from(new Uint8Array(proof), (b) =>
-      b.toString(16).padStart(2, "0"),
-    ).join(""),
-  };
 }

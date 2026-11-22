@@ -49,6 +49,18 @@ func Fingerprint(public string) string {
 // Pairing envelopes use X25519 + HKDF-SHA256 + AES-256-GCM with a request-bound context.
 // The service is trusted for initial public-key discovery; subsequent peers pin keys.
 func box(private, public, context string) (cipher.AEAD, error) {
+	key, e := sharedKey(private, public, context)
+	if e != nil {
+		return nil, e
+	}
+	b, e := aes.NewCipher(key)
+	if e != nil {
+		return nil, e
+	}
+	return cipher.NewGCM(b)
+}
+
+func sharedKey(private, public, context string) ([]byte, error) {
 	raw, e := hex.DecodeString(private)
 	if e != nil {
 		return nil, e
@@ -69,12 +81,7 @@ func box(private, public, context string) (cipher.AEAD, error) {
 	if e != nil {
 		return nil, e
 	}
-	key := derive(shared, context)
-	b, e := aes.NewCipher(key)
-	if e != nil {
-		return nil, e
-	}
-	return cipher.NewGCM(b)
+	return derive(shared, context), nil
 }
 func Seal(private, public, context string, value any) (string, error) {
 	a, e := box(private, public, context)

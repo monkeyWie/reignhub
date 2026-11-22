@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/coder/websocket"
 	"github.com/monkeyWie/reignhub/internal/connectivity"
 	"github.com/monkeyWie/reignhub/internal/control"
 	"github.com/monkeyWie/reignhub/internal/nativepath"
@@ -16,6 +17,15 @@ import (
 
 func ConnectRoutes(ctx context.Context, p Pairing, opts Options, device string, cached relay.Routes, direct []nativepath.Endpoint) (*Client, error) {
 	pool := connectivity.NewPathPool(ctx, connectivity.PathOps[*Client]{
+		Standby: func(ctx context.Context, c *Client) {
+			if c.wire.independent != nil {
+				_ = c.wire.independent.link.Send(ctx, 0, []byte{4})
+				return
+			}
+			if ws := c.wire.relaySocket(); ws != nil {
+				_ = ws.Write(ctx, websocket.MessageText, []byte(`{"kind":"standby"}`))
+			}
+		},
 		Closed: func(c *Client) bool { return c.wire.ctx.Err() != nil },
 		Name:   (*Client).Path, Probe: func(ctx context.Context, c *Client) error {
 			return c.Call(ctx, control.Request{Method: "network"}, nil)
@@ -82,7 +92,7 @@ func ConnectRoutes(ctx context.Context, p Pairing, opts Options, device string, 
 		}
 	}
 	addRoutes := func(routes relay.Routes) {
-		if opts.DisableNative || routes.Grant == "" || routes.Expires != 0 && routes.Expires <= time.Now().Unix() {
+		if opts.DisableNative {
 			return
 		}
 		add := func(e nativepath.Endpoint, node *relay.Enrollment) {
@@ -109,7 +119,10 @@ func ConnectRoutes(ctx context.Context, p Pairing, opts Options, device string, 
 				add(e, nil)
 			}
 		}
-		if n := routes.Node; n != nil && n.Host == p.Host && n.Device == device && n.Role == "client" {
+		for _, n := range routes.Nodes() {
+			if (routes.Expires != 0 && routes.Expires <= time.Now().Unix()) || n.Host != p.Host || n.Device != device || n.Role != "client" {
+				continue
+			}
 			add(n.Endpoint, n)
 			for name, mode := range directModes {
 				start("node/"+n.Pin+"/"+name, func(ctx context.Context) (*Client, error) {
@@ -167,27 +180,4 @@ func ConnectRoutes(ctx context.Context, p Pairing, opts Options, device string, 
 		}()
 	}
 	return &Client{routes: pool}, nil
-}
-
-func (c *Client) refreshPeerGrant(source *relay.RouteCredentials, initial string) {
-	tick := time.NewTicker(10 * time.Second)
-	defer tick.Stop()
-	for {
-		select {
-		case <-c.done:
-			return
-		case <-tick.C:
-		}
-		fresh := source.Load()
-		if fresh == nil || fresh.Grant == "" || fresh.Grant == initial {
-			continue
-		}
-		params, _ := json.Marshal(fresh.Grant)
-		ctx, cancel := context.WithTimeout(c.wire.ctx, connectivity.StageTimeout)
-		err := c.Call(ctx, control.Request{Method: "peer.grant", Params: params}, nil)
-		cancel()
-		if err == nil {
-			initial = fresh.Grant
-		}
-	}
 }

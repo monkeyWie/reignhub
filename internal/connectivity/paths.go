@@ -10,11 +10,12 @@ import (
 )
 
 type PathOps[T comparable] struct {
-	Name   func(T) string
-	Probe  func(context.Context, T) error
-	Select func(context.Context, T, uint64) error
-	Closed func(T) bool
-	Close  func(T)
+	Standby func(context.Context, T)
+	Name    func(T) string
+	Probe   func(context.Context, T) error
+	Select  func(context.Context, T, uint64) error
+	Closed  func(T) bool
+	Close   func(T)
 }
 type pathSample struct {
 	latency           time.Duration
@@ -136,6 +137,14 @@ func (p *PathPool[T]) choose(ctx context.Context) {
 			p.active = best
 			p.first.Do(func() { close(p.ready) })
 			p.mu.Unlock()
+			var zero T
+			if p.ops.Standby != nil && previous != zero && pathClass(current.name) == 1 {
+				go func() {
+					ctx, stop := context.WithTimeout(p.ctx, 3*time.Second)
+					defer stop()
+					p.ops.Standby(ctx, previous)
+				}()
+			}
 			return
 		}
 		// Try the next verified peer even when the fastest admission is rejected.

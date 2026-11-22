@@ -17,12 +17,10 @@ On desktop, the default view is the local device dashboard. Manage local agents 
 
 ## Trust and revocation
 
-First pairing needs confirmation on the host or verification of a configured password. Pairing keys stay local to the controller. Signing in synchronizes a device directory, not private pairing keys to a new browser.
+For manual access, approve the controller on the host or set an access password. Both endpoints keep their private keys locally. To revoke a manual pairing, remove it on the host.
 
-After using a public computer, clear controller data and revoke its authorization on the host. Clearing browser data alone does not revoke host-side trust.
+## Official account access
 
-## Official account sync
+Sign in on both endpoints and select an associated host from the account device list. The first connection opens without a pairing code or host approval. Remove a device from the account to revoke its account connections. A host disconnected from the control receives the removal when it next checks in.
 
-Native clients use a browser authorization code to sign in and bind the device. After confirmation on the account page, the same account can synchronize its directory; new controllers still need pairing.
-
-Official quotas count host computers. Phones and browser controllers do not occupy host slots. Codex App and CLI count as one Codex product. See [Account and plans](/account) for current entitlements.
+Free accounts can associate three hosts. Pro includes ten hosts and three simultaneous official relay connections. Controllers, Agents and sessions do not consume host slots. Self-hosted Go and Worker deployments support manual pairing without an account.

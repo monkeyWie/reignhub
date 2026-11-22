@@ -136,9 +136,6 @@ func connectOnce(ctx context.Context, p Pairing, opts Options) (*Client, error) 
 	if opts.RememberAddresses != nil {
 		opts.RememberAddresses(w.advertised)
 	}
-	if opts.Credentials != nil {
-		go c.refreshPeerGrant(opts.Credentials, "")
-	}
 	c.hostPlatform = statuses.Platform
 	w.meter.Connected()
 	return c, nil

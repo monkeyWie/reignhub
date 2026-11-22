@@ -149,7 +149,7 @@ func (s *State) dialogView(cx *core.Scope, kind string) core.Node {
 		if s.api.CanHost() {
 			prefix = "host.account."
 		}
-		children = append(children, label(cx, "登录后可同步设备。首次连接仍需主机确认或访问密码；自建开源服务无需登录。", 13, true))
+		children = append(children, label(cx, "同一账号的控制端可以直接访问已关联的被控端。", 13, true))
 		if s.accountLogin != nil {
 			children = append(children, label(cx, "授权码："+str(s.accountLogin, "code"), 17, false), s.copyButton(cx, "copy-login-code", "复制授权码", "outline", func() string { return str(s.accountLogin, "code") }), button(cx, "open-login-page", "在浏览器中打开登录页面", nil, "outline", func() { cx.OpenURL(str(s.accountLogin, "url"), nil) }))
 		}
@@ -165,7 +165,15 @@ func (s *State) dialogView(cx *core.Scope, kind string) core.Node {
 		}
 		footer = append(footer, s.actionButton(cx, "account-start", "登录与绑定", nil, "primary", func() {
 			params["service"] = service.Get()
-			s.call("account-start", prefix+"start", params, func(v any) { s.accountLogin = object(v); cx.OpenURL(str(s.accountLogin, "url"), nil) })
+			s.call("account-start", prefix+"start", params, func(v any) {
+				s.accountLogin = object(v)
+				if str(s.accountLogin, "state") == "approved" {
+					s.accountLogin = nil
+					s.refreshAccountStatus()
+					return
+				}
+				cx.OpenURL(str(s.accountLogin, "url"), nil)
+			})
 		}), s.actionButton(cx, "account-refresh", "刷新账号设备", nil, "outline", func() {
 			params := Object{"service": service.Get(), "name": s.clientName}
 			loginID := str(s.accountLogin, "id")

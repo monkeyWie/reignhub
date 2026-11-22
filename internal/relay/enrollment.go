@@ -28,9 +28,10 @@ type Enrollment struct {
 	Key       string `json:"key"`
 }
 type Routes struct {
-	Grant   string      `json:"grant"`
-	Expires int64       `json:"expires,omitempty"`
-	Node    *Enrollment `json:"node,omitempty"`
+	Alternates []*Enrollment `json:"alternates,omitempty"`
+	Grant      string        `json:"grant"`
+	Expires    int64         `json:"expires,omitempty"`
+	Node       *Enrollment   `json:"node,omitempty"`
 }
 
 func signingMAC(key []byte, parts ...string) []byte {
@@ -79,10 +80,38 @@ func (e *Enrollment) SameNode(other *Enrollment) bool {
 	}
 	return e.Endpoint == other.Endpoint && e.Namespace == other.Namespace && e.Issuer == other.Issuer && e.Key == other.Key && e.Role == other.Role && e.Host == other.Host && e.Device == other.Device
 }
+
+// Nodes returns a bounded candidate set with one membership per node identity.
+func (r *Routes) Nodes() []*Enrollment {
+	if r == nil {
+		return nil
+	}
+	var out []*Enrollment
+	seen := map[string]bool{}
+	add := func(n *Enrollment) {
+		if n != nil && !seen[n.Pin] && len(out) < 3 {
+			seen[n.Pin] = true
+			out = append(out, n)
+		}
+	}
+	add(r.Node)
+	for _, n := range r.Alternates {
+		add(n)
+	}
+	return out
+}
+func (r *Routes) member(e *Enrollment) *Enrollment {
+	for _, n := range r.Nodes() {
+		if n.SameNode(e) {
+			return n
+		}
+	}
+	return nil
+}
 func (s *RouteCredentials) Current(e *Enrollment) *Enrollment {
 	if s != nil {
-		if r := s.Load(); r != nil && r.Node.SameNode(e) {
-			return r.Node
+		if n := s.Load().member(e); n != nil {
+			return n
 		}
 	}
 	return e
@@ -103,12 +132,12 @@ func (s *RouteCredentials) Renew(ctx context.Context, l *nativepath.Link, e *Enr
 				return
 			case <-tick.C:
 			}
-			r := s.Load()
-			if r == nil || !r.Node.SameNode(e) {
+			n := s.Load().member(e)
+			if n == nil {
 				l.Close()
 				return
 			}
-			if next := r.Node.Grant; next != last {
+			if next := n.Grant; next != last {
 				if err := l.Send(ctx, nativepath.GrantLane, []byte(next)); err != nil {
 					l.Close()
 					return

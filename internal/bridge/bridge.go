@@ -236,6 +236,19 @@ func CallContext(parent context.Context, raw string) string {
 			r := in.Request
 			r.Method = in.Method
 			r.Params = in.Params
+			if in.Method == "host.account.start" {
+				var info struct {
+					ServiceURL string `json:"serviceUrl"`
+				}
+				if err := embedded.Call(ctx, control.Request{Method: "host.info"}, &info); err != nil {
+					return answer(nil, err)
+				}
+				token, err := h.ControllerCredential(ctx, info.ServiceURL, p.Name)
+				if err != nil {
+					return answer(nil, err)
+				}
+				r.Params, _ = json.Marshal(map[string]string{"controllerToken": token, "serviceUrl": info.ServiceURL})
+			}
 			e = embedded.Call(ctx, r, &out)
 		}
 	}

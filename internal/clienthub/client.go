@@ -32,6 +32,7 @@ type networkAddresses struct {
 	Addresses []nativepath.Endpoint `json:"addresses"`
 }
 type Saved struct {
+	AccountBinding    string                `json:"accountBinding,omitempty"`
 	Networks          []networkAddresses    `json:"networks,omitempty"`
 	Direct            []nativepath.Endpoint `json:"direct,omitempty"`
 	Routes            relay.Routes          `json:"routes,omitempty"`
@@ -202,7 +203,7 @@ func (h *Hub) Connect(ctx context.Context, service, code, public, password, name
 		if err := h.DB.LoadEnvironment(id, &saved); err != nil {
 			return Saved{}, err
 		}
-		if saved.Service == origin && saved.ConnectionID == code && saved.Key != "" && (saved.Expires == 0 || saved.Expires > time.Now().Unix()) {
+		if saved.Service == origin && saved.ConnectionID == code && saved.AccountBinding == "" && saved.Key != "" && (saved.Expires == 0 || saved.Expires > time.Now().Unix()) {
 			return h.connect(ctx, origin, code, public, password, name, remember, relayOnly, false, &saved)
 		}
 	}
@@ -260,15 +261,16 @@ func (h *Hub) connect(ctx context.Context, service, code, public, password, name
 		return Saved{}, e
 	}
 	var r struct {
-		Device deviceservice.Device
-		Online bool
+		Device         deviceservice.Device
+		AccountBinding string
+		Online         bool
 	}
 	if cached != nil {
 		r.Device = deviceservice.Device{ID: cached.Host, ConnectionID: cached.ConnectionID, Public: cached.Public, Name: cached.Name}
 		r.Online = true // The new signal lease and encrypted handshake verify liveness and authorization.
 	} else {
 		connectivity.Report(ctx, "resolve", "正在查找设备并检查在线状态", connectivity.StageTimeout)
-		if e = device.Post(ctx, service, i.Token, "/p2p/devices/resolve", map[string]any{"connectionId": code}, &r); e != nil {
+		if e = device.Post(ctx, service, i.Token, "/p2p/devices/resolve", map[string]any{"connectionId": code, "accountAccess": true}, &r); e != nil {
 			return Saved{}, e
 		}
 	}
@@ -299,6 +301,26 @@ func (h *Hub) connect(ctx context.Context, service, code, public, password, name
 	}
 	if s.Public != "" && s.Public != d.Public {
 		return Saved{}, fmt.Errorf("设备身份已变化，需要删除旧配对再确认")
+	}
+	if cached == nil && r.AccountBinding != "" {
+		key, err := device.AccountKey(i.Private, d.Public, r.AccountBinding)
+		if err != nil {
+			return s, err
+		}
+		if err = device.WaitAccountHost(ctx, service, i.Token, r.AccountBinding); err != nil {
+			return s, err
+		}
+		if s.Key != key {
+			s = Saved{ID: id, Service: service, ConnectionID: d.ConnectionID, Name: d.Name, Host: d.ID, Public: d.Public, Key: key, AccountBinding: r.AccountBinding}
+			if err = h.DB.SaveEnvironment(id, s); err != nil {
+				return s, err
+			}
+		}
+	} else if cached == nil && s.AccountBinding != "" {
+		if reconnectOnly {
+			return s, fmt.Errorf("账号设备关联已移除")
+		}
+		s.Key = ""
 	}
 	if s.Key == "" || (s.Expires > 0 && s.Expires <= time.Now().Unix()) {
 		connectivity.Report(ctx, "request", "正在向被控电脑请求授权", connectivity.StageTimeout)

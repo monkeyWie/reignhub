@@ -12,11 +12,11 @@ interface Account {
   plan: string;
   limits: Limits;
   admin: boolean;
+  controllers?: { id: string; name: string }[];
   devices: {
     id: string;
     name: string;
     connectionId: string;
-    products: string[];
   }[];
 }
 interface Plan {
@@ -130,18 +130,15 @@ export function AccountPage({
             <h2>当前权益 · {account.plan}</h2>
             <p className="muted">
               电脑 {account.devices.length} /{" "}
-              {account.limits.maxHostDevices ?? "不限"} 台 · 每台{" "}
-              {account.limits.maxAgentsPerDevice ?? "不限"} 个 Agent 产品 · 中继
+              {account.limits.maxHostDevices ?? "不限"} 台 · 官方中继
               {account.limits.allowRelay ? "已启用" : "未启用（优先直连）"}
             </p>
-            <small className="muted">
-              手机与浏览器不占被控电脑额度；Codex App 和 CLI 合并计为一个产品。
-            </small>
+            <small className="muted">控制端登录不占被控端名额。</small>
           </section>
           <section className="account-section">
             <h2>设备同步</h2>
             <p className="muted">
-              在原生客户端点击「登录与绑定账号」，将显示的授权码填在这里。绑定电脑需要本机确认；同步后首次连接仍需配对授权。
+              在原生客户端点击「登录与绑定账号」，将显示的授权码填在这里。同账号的控制端可直接访问已关联的被控端。
             </p>
             <input
               className="field"
@@ -154,9 +151,16 @@ export function AccountPage({
               onClick={async () => {
                 try {
                   setBusy(true);
-                  await api("/api/account/device-login/approve", { code });
+                  const result = await api<{
+                    hostLinked: boolean;
+                    hostLimit?: boolean;
+                  }>("/api/account/device-login/approve", { code });
                   setCode("");
-                  setError("绑定成功，可返回原生客户端。");
+                  setError(
+                    result.hostLimit
+                      ? "已登录控制端。被控端名额已满，可移除设备后重新关联。"
+                      : "绑定成功，可返回客户端。",
+                  );
                   await refresh();
                 } catch (e) {
                   setError(String(e));
@@ -172,7 +176,6 @@ export function AccountPage({
                 <tr>
                   <th>设备</th>
                   <th>编号</th>
-                  <th>已启用产品</th>
                   <th />
                 </tr>
               </thead>
@@ -186,40 +189,12 @@ export function AccountPage({
                       </a>
                     </td>
                     <td>
-                      {d.products.join(", ") || "未选择"}
-                      <Button
-                        size="small"
-                        variant="ghost"
-                        onClick={async () => {
-                          const value = prompt(
-                            "远控产品（逗号分隔，例如 codex,claude）",
-                            d.products.join(","),
-                          );
-                          if (value === null) return;
-                          try {
-                            await api("/api/account/devices/products", {
-                              device: d.id,
-                              products: value
-                                .split(",")
-                                .map((s) => s.trim())
-                                .filter(Boolean),
-                            });
-                            await refresh();
-                          } catch (e) {
-                            setError(String(e));
-                          }
-                        }}
-                      >
-                        调整
-                      </Button>
-                    </td>
-                    <td>
                       <Button
                         size="small"
                         variant="ghost"
                         onClick={async () => {
                           if (
-                            !confirm("从账号移除此设备？本地配对不会自动删除。")
+                            !confirm("移除后，使用此账号关联建立的连接将断开。")
                           )
                             return;
                           try {
@@ -239,13 +214,40 @@ export function AccountPage({
                 ))}
               </tbody>
             </table>
+            {account.controllers?.length ? (
+              <>
+                <h3>已登录的控制端</h3>
+                {account.controllers.map((c) => (
+                  <div key={c.id}>
+                    {c.name}{" "}
+                    <Button
+                      size="small"
+                      variant="ghost"
+                      onClick={async () => {
+                        if (!confirm("撤销此控制端的账号访问权限？")) return;
+                        try {
+                          await api("/api/account/devices/remove", {
+                            device: c.id,
+                          });
+                          await refresh();
+                        } catch (e) {
+                          setError(String(e));
+                        }
+                      }}
+                    >
+                      移除
+                    </Button>
+                  </div>
+                ))}
+              </>
+            ) : null}
           </section>
         </>
       ) : (
         <>
           <h1>登录 ReignHub</h1>
           <p className="muted">
-            同步你的设备，随时接续 Agent 工作。首次连接仍由电脑授权。
+            登录后可从同一账号的控制端直接访问已关联的被控端。
           </p>
           {legal && (
             <p className="muted account-legal">
@@ -280,10 +282,8 @@ export function AccountPage({
                 <strong>{p.priceLabel}</strong>
                 <p>
                   被控电脑：{p.limits.maxHostDevices ?? "不限"} 台<br />
-                  每台 Agent：{p.limits.maxAgentsPerDevice ?? "不限"} 个产品
-                  <br />
                   {p.limits.allowRelay
-                    ? "包含加密 WSS 中继"
+                    ? `官方中继 · 同时 ${p.limits.maxConcurrentConnections ?? "不限"} 路`
                     : "直连，不含官方中继"}
                 </p>
                 {p.purchasable && (
@@ -389,7 +389,7 @@ export function AdminPage() {
         />
         <textarea
           className="field"
-          placeholder='{"maxHostDevices":5,"maxAgentsPerDevice":2,"maxConcurrentConnections":null,"allowRelay":true}'
+          placeholder='{"maxHostDevices":5,"maxAgentsPerDevice":null,"maxConcurrentConnections":null,"allowRelay":true}'
           value={override}
           onChange={(e) => setOverride(e.target.value)}
         />

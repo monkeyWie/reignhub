@@ -39,7 +39,7 @@ func (w *wire) readIndependent() {
 			return errors.New("empty route record")
 		}
 		switch b[0] {
-		case 1:
+		case 1, 3:
 			w.onChunk(b[1:])
 		case 2:
 			if lane != 0 {
@@ -259,9 +259,6 @@ func connectPaired(ctx context.Context, p Pairing, opts Options, device, grant s
 	w.meter.Connected()
 	if node != nil {
 		opts.Credentials.Renew(w.ctx, l, node)
-	}
-	if opts.Credentials != nil {
-		go c.refreshPeerGrant(opts.Credentials, grant)
 	}
 
 	w.progress("path:"+name, "transport", name, endpoint.AddressFor(network), "success")

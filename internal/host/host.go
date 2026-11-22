@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -43,6 +44,7 @@ type Grant struct {
 	Expires int64             `json:"expires,omitempty"`
 }
 type saved struct {
+	Alternates   []*relay.Enrollment `json:"alternates,omitempty"`
 	Policy       connectivity.Policy `json:"policy,omitempty"`
 	Node         *relay.Enrollment   `json:"node,omitempty"`
 	Port         string              `json:"port,omitempty"`
@@ -56,21 +58,23 @@ type Intent struct {
 	Remember bool              `json:"remember"`
 }
 type Manager struct {
-	mu            sync.Mutex
-	activation    sync.Mutex
-	configMu      sync.Mutex
-	cfg           config.Config
-	state         saved
-	pending       map[string]deviceservice.Pair
-	intents       map[string]Intent
-	status        string
-	network       *remote.HostStatus
-	d             *control.Dispatcher
-	ice           func(config.Config) remote.Options
-	path          string
-	attempts      map[string][]time.Time
-	agentAttempts map[string]context.CancelFunc
-	agentWake     map[string]chan struct{}
+	accountRevision uint64
+	accountKeys     map[string]accountPeer
+	mu              sync.Mutex
+	activation      sync.Mutex
+	configMu        sync.Mutex
+	cfg             config.Config
+	state           saved
+	pending         map[string]deviceservice.Pair
+	intents         map[string]Intent
+	status          string
+	network         *remote.HostStatus
+	d               *control.Dispatcher
+	ice             func(config.Config) remote.Options
+	path            string
+	attempts        map[string][]time.Time
+	agentAttempts   map[string]context.CancelFunc
+	agentWake       map[string]chan struct{}
 }
 
 func New(c config.Config, d *control.Dispatcher, ice func(config.Config) remote.Options) *Manager {
@@ -259,6 +263,7 @@ func (m *Manager) Run(ctx context.Context) {
 				opts.TCPSTUN = policy.TCPSTUN
 				opts.DirectAddresses = func() []nativepath.Endpoint { return m.directAddresses(i) }
 				opts.ResolveKey = m.key
+				opts.AccountRemoved = m.removeAccountPeer
 				opts.OnClientInfo = m.updateClientInfo
 				m.startRoutes(life, i, opts, n, &background)
 				background.Go(func() {
@@ -338,6 +343,7 @@ func (m *Manager) register(ctx context.Context, c config.Config) error {
 	}
 	m.mu.Lock()
 	m.state = s
+	m.accountKeys = nil
 	m.path = path
 	m.pending = map[string]deviceservice.Pair{}
 	m.intents = map[string]Intent{}
@@ -347,22 +353,28 @@ func (m *Manager) register(ctx context.Context, c config.Config) error {
 func (m *Manager) key(id string) (string, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if a, ok := m.accountKeys[id]; ok {
+		return a.key, true
+	}
 	g, ok := m.state.Grants[id]
 	return g.Key, ok && !g.Revoked && (g.Expires == 0 || g.Expires > time.Now().Unix())
 }
 func (m *Manager) poll(ctx context.Context) {
 	m.mu.Lock()
+	rev := m.accountRevision
 	i := m.state.Identity
 	m.mu.Unlock()
 	if i.ID == "" {
 		return
 	}
-	if e := device.Post(ctx, i.Service, i.Token, "/p2p/devices/presence", map[string]any{"name": i.Name}, nil); e != nil {
+	var presence struct{ AccountPeers []accountPeer }
+	if e := device.Post(ctx, i.Service, i.Token, "/p2p/devices/presence", map[string]any{"name": i.Name, "accountAccess": true}, &presence); e != nil {
 		m.mu.Lock()
 		m.status = e.Error()
 		m.mu.Unlock()
 		return
 	}
+	m.syncAccountPeers(ctx, i, rev, presence.AccountPeers)
 	m.mu.Lock()
 	var revoked []Grant
 	for _, g := range m.state.Grants {
@@ -547,8 +559,23 @@ func (m *Manager) Local(ctx context.Context, r control.Request) (any, error) {
 		i := m.state.Identity
 		m.mu.Unlock()
 		paths := map[string]string{"host.account.start": "/api/account/device-login/start", "host.account.poll": "/api/account/device-login/poll", "host.account.status": "/api/account/device-status", "host.account.devices": "/api/account/device-list"}
+		payload := map[string]any{"id": in.ID}
+		if r.Method == "host.account.start" {
+			var companion struct{ ControllerToken, ServiceURL string }
+			if len(r.Params) > 0 {
+				if err := json.Unmarshal(r.Params, &companion); err != nil {
+					return nil, err
+				}
+			}
+			if companion.ControllerToken != "" {
+				if i.Service != companion.ServiceURL {
+					return nil, fmt.Errorf("设备服务地址已变更，请重新登录")
+				}
+				payload["controllerToken"] = companion.ControllerToken
+			}
+		}
 		var out map[string]any
-		err := device.Post(ctx, i.Service, i.Token, paths[r.Method], map[string]any{"id": in.ID}, &out)
+		err := device.Post(ctx, i.Service, i.Token, paths[r.Method], payload, &out)
 		return out, err
 	case "host.info":
 		m.mu.Lock()
@@ -714,9 +741,9 @@ func (m *Manager) saveGrant(id string, g *Grant) error {
 func (m *Manager) startRoutes(ctx context.Context, i device.Identity, opts remote.Options, status *remote.HostStatus, background *sync.WaitGroup) {
 	m.mu.Lock()
 	port := m.state.Port
-	node := m.state.Node
+	cachedRoutes := relay.Routes{Node: m.state.Node, Alternates: m.state.Alternates}
 	opts.Credentials = &relay.RouteCredentials{}
-	opts.Credentials.Store(&relay.Routes{Node: node})
+	opts.Credentials.Store(&cachedRoutes)
 	m.mu.Unlock()
 	background.Go(func() {
 		// Choose a stable service port outside the dynamic client port range.
@@ -752,46 +779,56 @@ func (m *Manager) startRoutes(ctx context.Context, i device.Identity, opts remot
 		}
 	})
 	background.Go(func() {
-		var stop context.CancelFunc
+		type registration struct {
+			node *relay.Enrollment
+			stop context.CancelFunc
+		}
+		running := map[string]registration{}
 		defer func() {
-			if stop != nil {
-				stop()
+			for _, r := range running {
+				r.stop()
 			}
 		}()
-		register := func(n *relay.Enrollment) {
-			if stop != nil {
-				stop()
+		reconcile := func(routes relay.Routes) {
+			for pin, r := range running {
+				found := false
+				for _, n := range routes.Nodes() {
+					if r.node.SameNode(n) {
+						found = true
+						break
+					}
+				}
+				if !found {
+					r.stop()
+					delete(running, pin)
+				}
 			}
-			var life context.Context
-			life, stop = context.WithCancel(ctx)
-			if n != nil {
+			for _, n := range routes.Nodes() {
+				if _, ok := running[n.Pin]; ok {
+					continue
+				}
+				life, stop := context.WithCancel(ctx)
+				running[n.Pin] = registration{n, stop}
 				background.Go(func() { remote.RegisterPaired(life, n, i.ID, opts, m.d, status) })
 			}
 		}
-		register(node)
+		reconcile(cachedRoutes)
 		for ctx.Err() == nil {
 			var routes relay.Routes
 			e := device.Post(ctx, i.Service, i.Token, "/p2p/routes", map[string]string{"host": i.ID}, &routes)
 			if e == nil && ctx.Err() == nil {
 				opts.Credentials.Store(&routes)
-			}
-			if e == nil && ctx.Err() == nil && (node != routes.Node && (node == nil || routes.Node == nil || *node != *routes.Node)) {
-				m.mu.Lock()
-				if m.state.Identity.Service != i.Service || ctx.Err() != nil {
+				reconcile(routes)
+				if !reflect.DeepEqual(cachedRoutes.Node, routes.Node) || !reflect.DeepEqual(cachedRoutes.Alternates, routes.Alternates) {
+					m.mu.Lock()
+					m.state.Node, m.state.Alternates = routes.Node, routes.Alternates
+					e = m.save()
 					m.mu.Unlock()
-					return
-				}
-				m.state.Node = routes.Node
-				e = m.save()
-				m.mu.Unlock()
-				if e == nil {
-					changed := !node.SameNode(routes.Node)
-					node = routes.Node
-					if changed {
-						register(node)
+					if e == nil {
+						cachedRoutes = routes
+					} else {
+						status.ReportError(e)
 					}
-				} else {
-					status.ReportError(e)
 				}
 			}
 			delay := time.Minute

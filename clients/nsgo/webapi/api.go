@@ -163,11 +163,23 @@ func (a *API) connect(ctx context.Context, p Object) (any, error) {
 	connectivity.Note(ctx, "service", "service", "本机身份已验证", service, "success")
 	var r Object
 	cached := obj(p["cached"])
+	saved, e := a.saved()
+	if e != nil {
+		return nil, e
+	}
 	if len(cached) > 0 {
 		r = Object{"online": true, "device": Object{"id": cached["host"], "public": cached["public"], "name": cached["name"], "connectionId": cached["connectionId"]}}
 	} else {
 		connectivity.Report(ctx, "lookup", "正在查找被控设备", connectivity.StageTimeout)
-		r, e = post(ctx, service, token, "/p2p/devices/resolve", Object{"connectionId": p["code"]})
+		accountAccess := true
+		code := strings.NewReplacer(" ", "", "-", "").Replace(str(p, "code"))
+		for _, v := range saved {
+			if str(v, "service") == service && str(v, "connectionId") == code && str(v, "accountBinding") == "" && str(v, "key") != "" && (num(v, "expires") == 0 || num(v, "expires") > time.Now().Unix()) {
+				accountAccess = false
+				break
+			}
+		}
+		r, e = post(ctx, service, token, "/p2p/devices/resolve", Object{"connectionId": p["code"], "accountAccess": accountAccess})
 		if e != nil {
 			return nil, e
 		}
@@ -199,10 +211,6 @@ func (a *API) connect(ctx context.Context, p Object) (any, error) {
 	if str(p, "public") != "" && p["public"] != d["public"] {
 		return nil, errors.New("二维码公钥不匹配")
 	}
-	saved, e := a.saved()
-	if e != nil {
-		return nil, e
-	}
 	s := Object{}
 	for _, v := range saved {
 		if v["id"] == id {
@@ -216,6 +224,24 @@ func (a *API) connect(ctx context.Context, p Object) (any, error) {
 	}
 	if str(s, "public") != "" && s["public"] != d["public"] {
 		return nil, errors.New("设备身份已变化，需要重新配对")
+	}
+	if binding := str(r, "accountBinding"); binding != "" {
+		key, err := device.AccountKey(str(i, "private"), str(d, "public"), binding)
+		if err != nil {
+			return nil, err
+		}
+		if err = device.WaitAccountHost(ctx, service, token, binding); err != nil {
+			return nil, err
+		}
+		if key != str(s, "key") {
+			s = Object{"id": id, "service": service, "host": d["id"], "connectionId": d["connectionId"], "public": d["public"], "name": d["name"], "key": key, "accountBinding": binding}
+			expired = false
+		}
+	} else if len(cached) == 0 && str(s, "accountBinding") != "" {
+		if p["reconnectOnly"] == true {
+			return nil, errors.New("账号设备关联已移除")
+		}
+		delete(s, "key")
 	}
 	if str(s, "key") == "" || expired {
 		connectivity.Report(ctx, "authorize", "等待被控设备授权", connectivity.StageTimeout)

@@ -90,6 +90,12 @@ func serveHostObserved(ctx context.Context, p Pairing, opts Options, d *control.
 		if json.Unmarshal(raw, &f) != nil || f.Peer == "" {
 			continue
 		}
+		if f.Kind == "account-removed" {
+			if opts.AccountRemoved != nil {
+				opts.AccountRemoved(f.Device, f.Peer)
+			}
+			continue
+		}
 		if f.Kind == "lease" && f.Peer == hostPeer {
 			continue
 		}
@@ -164,20 +170,6 @@ func newHostPeer(ctx context.Context, ws *websocket.Conn, peerID, key, hostID, d
 		if len(data) > 1<<20 || json.Unmarshal(data, &req) != nil || req.ID == "" {
 			return
 		}
-		if req.Method == "peer.grant" && opts.ResolveKey != nil {
-			var ticket string
-			response := control.Response{ID: req.ID, Result: json.RawMessage(`{}`)}
-			if json.Unmarshal(req.Params, &ticket) != nil || peer.authorizeTicket(ticket, hostID, deviceID, req) != nil {
-				response = authorizationFailure(req.ID, errConnectionAuthorization)
-			} else {
-				peer.grantMu.Lock()
-				peer.offlineGrant = ticket
-				peer.grantMu.Unlock()
-			}
-			raw, _ := json.Marshal(response)
-			go peer.sendContext(peer.ctx, req.ID, raw)
-			return
-		}
 		if err := peer.authorize(hostID, deviceID, req); err != nil {
 			encoded, _ := json.Marshal(authorizationFailure(req.ID, err))
 			go peer.sendContext(peer.ctx, req.ID, encoded)
@@ -190,7 +182,7 @@ func newHostPeer(ctx context.Context, ws *websocket.Conn, peerID, key, hostID, d
 				response.Error = "连接路径已被替换"
 			}
 			raw, _ := json.Marshal(response)
-			go peer.sendContext(peer.ctx, req.ID, raw)
+			go peer.sendContext(transport.WithMethod(peer.ctx, req.Method), req.ID, raw)
 			return
 		}
 		if req.Method == control.CancelRead {

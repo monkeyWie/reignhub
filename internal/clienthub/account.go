@@ -26,3 +26,9 @@ func (h *Hub) Account(ctx context.Context, service, name, action, id string) (an
 	err = device.Post(ctx, origin, identity.Token, path, map[string]any{"id": id}, &out)
 	return out, err
 }
+
+// ControllerCredential supplies the companion identity to the local host's login request.
+func (h *Hub) ControllerCredential(ctx context.Context, service, name string) (string, error) {
+	i, err := h.identity(ctx, service, name)
+	return i.Token, err
+}

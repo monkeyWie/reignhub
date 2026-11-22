@@ -16,6 +16,23 @@ export interface Policy {
   deployment: "self-hosted" | "saas";
   loginProviders(env: CoreEnv): string[];
   accountRequired?(env: CoreEnv): boolean;
+  accountBinding?(
+    env: CoreEnv,
+    client: string,
+    host: string,
+  ): Promise<string | undefined>;
+  accountPeers?(
+    env: CoreEnv,
+    host: string,
+  ): Promise<{ client: string; public: string; binding: string }[]>;
+  relayUsageUrl?(env: CoreEnv): string;
+  useRelay?(
+    env: CoreEnv,
+    host: string,
+    client: string,
+    holder: string,
+    release: boolean,
+  ): Promise<void>;
   admit(
     env: CoreEnv,
     device: DeviceRow,

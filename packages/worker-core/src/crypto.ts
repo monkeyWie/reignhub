@@ -75,6 +75,7 @@ export async function issueGrant(
   role: Role,
   decision: Decision,
   mode: "online" | "private" | "managed" = "online",
+  relayUsageUrl?: string,
 ): Promise<{ ticket: string; expires: number }> {
   const identity = await serviceIdentity(env);
   const now = Math.floor(Date.now() / 1000);
@@ -93,6 +94,7 @@ export async function issueGrant(
     iat: now,
     exp: mode === "private" ? 0 : now + 180,
     jti: id(),
+    relayUsageUrl,
   };
   const payload = bytes64(enc.encode(JSON.stringify(grant)));
   const key = await crypto.subtle.importKey(

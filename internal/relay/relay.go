@@ -17,6 +17,7 @@ import (
 )
 
 type Frame struct {
+	Probe      bool   `json:"probe,omitempty"`
 	Protocol   int    `json:"protocol,omitempty"`
 	AllowRelay bool   `json:"allowRelay,omitempty"`
 	Grant      string `json:"grant,omitempty"`
@@ -200,7 +201,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			var f Frame
-			if json.Unmarshal(raw, &f) != nil || (f.Kind != "chunk" && f.Kind != "data") {
+			if json.Unmarshal(raw, &f) != nil {
+				return
+			}
+			if f.Kind == "standby" && role == "client" {
+				continue
+			}
+			if f.Kind != "chunk" && f.Kind != "data" {
 				return
 			}
 			s.mu.Lock()

@@ -48,10 +48,20 @@ func (s *State) refreshAccountStatus() {
 		ctx, cancel := context.WithTimeout(s.ctx, 5*time.Second)
 		defer cancel()
 		v, err := s.api.Call(ctx, method, params, "", nil)
+		var directory []Object
+		var listErr error
+		if err == nil && flag(object(v), "linked") {
+			var list any
+			list, listErr = s.api.Call(ctx, strings.TrimSuffix(method, "status")+"devices", params, "", nil)
+			directory = objects(object(list)["devices"])
+		}
 		s.cx.Post(func() {
 			s.accountStatusLoading = false
 			if s.ctx.Err() == nil && err == nil {
 				s.accountStatus = object(v)
+				if listErr == nil {
+					s.accountDevices = directory
+				}
 				s.changed()
 			}
 		})

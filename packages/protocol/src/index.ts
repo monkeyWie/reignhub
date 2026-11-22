@@ -74,8 +74,10 @@ export interface Grant {
   iat: number;
   exp: number;
   jti: string;
+  relayUsageUrl?: string;
 }
 export interface Frame {
+  probe?: boolean;
   peer?: string;
   device?: string;
   kind: string;

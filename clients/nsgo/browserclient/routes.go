@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/coder/websocket"
 	"github.com/monkeyWie/reignhub/internal/connectivity"
 	"github.com/monkeyWie/reignhub/internal/nativepath"
 	"github.com/monkeyWie/reignhub/internal/relay"
@@ -14,6 +15,15 @@ import (
 // Each candidate owns an authenticated peer, encryption counters and request inbox.
 func ConnectRoutes(ctx context.Context, p Pairing, device string, cached relay.Routes, fetch func(context.Context) (relay.Routes, error)) (*Client, error) {
 	pool := connectivity.NewPathPool(ctx, connectivity.PathOps[*Client]{
+		Standby: func(ctx context.Context, c *Client) {
+			if c.node != nil {
+				_ = c.node.Send(ctx, 0, []byte{4})
+				return
+			}
+			if ws := c.dataWS.Load(); ws != nil {
+				_ = ws.Write(ctx, websocket.MessageText, []byte(`{"kind":"standby"}`))
+			}
+		},
 		Closed: func(c *Client) bool { return c.ctx.Err() != nil }, Name: (*Client).Path, Close: (*Client).Close,
 		Probe: func(ctx context.Context, c *Client) error {
 			_, err := c.Call(ctx, Object{"method": "network"})
@@ -53,23 +63,24 @@ func ConnectRoutes(ctx context.Context, p Pairing, device string, cached relay.R
 		})
 	}
 	addNode := func(r relay.Routes) {
-		n := r.Node
-		if n == nil || n.WSS == "" || n.Host != p.Host || n.Device != device || n.Role != "client" || r.Grant == "" || r.Expires != 0 && r.Expires <= time.Now().Unix() {
-			return
-		}
-		for _, direct := range []bool{false, true} {
-			if direct && p.RelayOnly {
+		for _, n := range r.Nodes() {
+			if n == nil || n.WSS == "" || n.Host != p.Host || n.Device != device || n.Role != "client" || r.Grant == "" || r.Expires != 0 && r.Expires <= time.Now().Unix() {
 				continue
 			}
-			opts := p
-			opts.RelayOnly = !direct
-			opts.directOnly = direct
-			opts.RouteName = "WSS"
-			name := "relay:"
-			if direct {
-				name = "webrtc:"
+			for _, direct := range []bool{false, true} {
+				if direct && p.RelayOnly {
+					continue
+				}
+				opts := p
+				opts.RelayOnly = !direct
+				opts.directOnly = direct
+				opts.RouteName = "WSS"
+				name := "relay:"
+				if direct {
+					name = "webrtc:"
+				}
+				start(name+n.WSS, func() (*Client, error) { return connectNode(race, opts, n, r.Grant, creds) })
 			}
-			start(name+n.WSS, func() (*Client, error) { return connectNode(race, opts, n, r.Grant, creds) })
 		}
 	}
 	for _, direct := range []bool{false, true} {
@@ -163,7 +174,7 @@ func connectNode(ctx context.Context, p Pairing, n *relay.Enrollment, grant stri
 				return errors.New("empty route record")
 			}
 			switch b[0] {
-			case 1:
+			case 1, 3:
 				return c.receiveChunk(b[1:])
 			case 2:
 				var f frame
@@ -185,27 +196,5 @@ func connectNode(ctx context.Context, p Pairing, n *relay.Enrollment, grant stri
 		return nil, err
 	}
 	creds.Renew(c.ctx, l, n)
-	if n.Issuer != "" {
-		go c.renewGrant(creds, grant)
-	}
 	return c, nil
-}
-func (c *Client) renewGrant(creds *relay.RouteCredentials, grant string) {
-	tick := time.NewTicker(10 * time.Second)
-	defer tick.Stop()
-	for {
-		select {
-		case <-c.ctx.Done():
-			return
-		case <-tick.C:
-		}
-		if r := creds.Load(); r != nil && r.Grant != "" && r.Grant != grant {
-			ctx, stop := context.WithTimeout(c.ctx, connectivity.ResumeTimeout)
-			_, err := c.Call(ctx, Object{"method": "peer.grant", "params": r.Grant})
-			stop()
-			if err == nil {
-				grant = r.Grant
-			}
-		}
-	}
 }

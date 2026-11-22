@@ -14,8 +14,15 @@ const (
 )
 
 type priorityKey struct{}
+type probeKey struct{}
+
+func IsProbe(method string) bool            { return method == "network" || method == "peer.select" }
+func ProbeContext(ctx context.Context) bool { v, _ := ctx.Value(probeKey{}).(bool); return v }
 
 func WithMethod(ctx context.Context, method string) context.Context {
+	if IsProbe(method) {
+		ctx = context.WithValue(ctx, probeKey{}, true)
+	}
 	p := Urgent
 	switch method {
 	case "transcript", "attachment.read", "attachment.write", "terminal.read", "terminal.attach", "terminal.open", "terminal.openProfile":

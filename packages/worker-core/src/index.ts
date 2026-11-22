@@ -1,10 +1,11 @@
+export { externalRelays } from "./external-relay";
 export { handleConsole } from "./console";
 import { stunServers } from "./stun-servers";
 import { drizzle } from "drizzle-orm/d1";
 import { and, eq, gt, inArray } from "drizzle-orm";
 import { APIError, PROTOCOL, routes, type Device } from "@reignhub/protocol";
 import { devices, grants, pairings, type DeviceRow } from "./schema";
-import { enrollNode } from "./external-relay";
+import { enrollNodes } from "./external-relay";
 import { issueGrant, hash, id, random, serviceIdentity, un64 } from "./crypto";
 import { unrestricted, type CoreEnv, type Policy } from "./types";
 export * from "./schema";
@@ -332,22 +333,25 @@ export async function handleCore(
               role,
               decision,
               durable ? "private" : "managed",
+              durable ? undefined : policy.relayUsageUrl?.(env),
             );
             const identity = await serviceIdentity(env);
+            const nodes = decision.limits.allowRelay
+              ? await enrollNodes(
+                  env,
+                  identity.serviceId,
+                  durable ? "" : identity.public,
+                  hostID,
+                  device.id,
+                  role,
+                  signed.ticket,
+                )
+              : [];
             result = json({
               grant: signed.ticket,
               expires: signed.expires,
-              node: decision.limits.allowRelay
-                ? await enrollNode(
-                    env,
-                    identity.serviceId,
-                    durable ? "" : identity.public,
-                    hostID,
-                    device.id,
-                    role,
-                    signed.ticket,
-                  )
-                : undefined,
+              node: nodes[0],
+              alternates: nodes.length > 1 ? nodes.slice(1) : undefined,
             });
             result.headers.set("Cache-Control", "no-store");
             break;
@@ -365,7 +369,13 @@ export async function handleCore(
                 .update(devices)
                 .set({ name, seen: now })
                 .where(eq(devices.id, device.id));
-            result = json({ ok: true });
+            result = json({
+              ok: true,
+              accountPeers:
+                device.host && input.accountAccess === true
+                  ? await policy.accountPeers?.(env, device.id)
+                  : undefined,
+            });
             break;
           }
           case routes.status: {
@@ -448,6 +458,10 @@ export async function handleCore(
               (r) => r.json(),
             )) as { online: boolean };
             result = json({
+              accountBinding:
+                online.online && input.accountAccess === true
+                  ? await policy.accountBinding?.(env, device.id, host.id)
+                  : undefined,
               device: publicDevice(host),
               online: online.online,
             });
@@ -580,7 +594,10 @@ export async function handleCore(
                     : undefined,
                 ),
               );
-            if (revoked.meta.changes)
+            if (
+              revoked.meta.changes &&
+              !(await canAccess(env, String(input.client), device.id))
+            )
               await roomCall(env, device.id, "/revoke", {
                 device: String(input.client),
               });
