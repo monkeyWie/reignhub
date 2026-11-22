@@ -1248,10 +1248,112 @@
   color: var(--muted);
   font-size: 12px;
 }
+.sign-in-panel {
+  max-width: 416px;
+  margin: 0 auto 36px;
+  padding: clamp(18px, 4vw, 32px);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--bg);
+}
+.sign-in-panel h1 {
+  margin: 0 0 6px;
+  letter-spacing: -0.035em;
+}
+.sign-in-panel > p {
+  margin: 0;
+  line-height: 1.6;
+}
+.email-sign-in {
+  display: grid;
+  gap: 8px;
+  margin-top: 24px;
+}
+.email-sign-in label {
+  font-weight: 550;
+}
+.email-sign-in .field,
+.email-sign-in .button {
+  min-height: 44px;
+}
+.email-sign-in .field {
+  width: 100%;
+  font-size: 16px;
+}
+.email-sign-in .field:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.email-sign-in .primary {
+  margin-top: 8px;
+}
+.email-sign-in p {
+  margin: 0;
+  font-size: 13px;
+}
+.sign-in-methods {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px;
+}
+.sign-in-recipient {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 8px;
+}
+.sign-in-recipient span {
+  overflow-wrap: anywhere;
+  color: var(--muted);
+}
+.sign-in-code {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: clamp(4px, 1vw, 8px);
+  direction: ltr;
+}
+.sign-in-code span {
+  display: grid;
+  place-items: center;
+  min-height: 44px;
+  aspect-ratio: 1;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+}
+.sign-in-code:focus-within span[data-active="true"] {
+  outline: 2px solid var(--fg);
+  outline-offset: -2px;
+}
+.sign-in-code input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  font-size: 16px;
+  cursor: text;
+}
 .login-actions {
   display: flex;
-  gap: 12px;
-  margin-top: 25px;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 16px;
+  margin-top: 16px;
+  border-top: 1px solid var(--border);
+}
+.login-actions .button {
+  flex: 1;
+  min-height: 44px;
+}
+.sign-in-panel > .account-message,
+.sign-in-panel > .account-legal {
+  margin-top: 16px;
 }
 .account-message {
   color: var(--danger);

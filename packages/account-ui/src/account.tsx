@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { Button } from "./ui";
+import { EmailSignIn } from "./email-sign-in";
 interface Limits {
   maxHostDevices: number | null;
   maxAgentsPerDevice: number | null;
@@ -12,6 +13,7 @@ interface Account {
   plan: string;
   limits: Limits;
   admin: boolean;
+  canSetPassword?: boolean;
   controllers?: { id: string; name: string }[];
   devices: {
     id: string;
@@ -49,11 +51,9 @@ export function AccountPage({
   const [providers, setProviders] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
-  const [email, setEmail] = useState("");
-  const [otp, setOtp] = useState("");
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
-  const [handoff, setHandoff] = useState(false);
+  const [newPassword, setNewPassword] = useState("");
   async function refresh() {
     try {
       const data = await api<{
@@ -65,6 +65,17 @@ export function AccountPage({
       setAccount(data.account || undefined);
       setPlans(data.plans);
       setProviders(data.providers);
+      const url = new URL(location.href);
+      const provider = url.searchParams.get("provider");
+      if (
+        url.searchParams.has("code") &&
+        (provider === "github" || provider === "google")
+      ) {
+        url.searchParams.delete("provider");
+        history.replaceState(history.state, "", url);
+        if (data.providers.includes(provider)) await login(provider);
+        else setError("此服务尚未启用该登录方式");
+      }
       if (data.deployment === "self-hosted")
         setError(
           "这是自行部署的开源服务，无需账号，连接与中继没有商业套餐限制。",
@@ -80,26 +91,23 @@ export function AccountPage({
     const p = new URLSearchParams(location.search);
     if (p.get("code")) {
       setCode(p.get("code")!);
-      setHandoff(true);
     }
   }, []);
-  async function emailLogin(verify: boolean) {
-    setBusy(true);
-    try {
-      await api("/api/account/email/" + (verify ? "verify" : "send"), {
-        email,
-        otp,
-      });
-      if (verify) {
-        setOtp("");
-        setError("");
-        await refresh();
-      } else setError("验证码已发送，请查看邮箱。");
-    } catch (err) {
-      setError(String(err));
-    } finally {
-      setBusy(false);
-    }
+  async function emailLogin(
+    action: "send" | "verify" | "password",
+    email: string,
+    secret: string,
+  ) {
+    setError("");
+    await api("/api/account/email/" + action, {
+      email,
+      ...(action === "password"
+        ? { password: secret }
+        : action === "verify"
+          ? { otp: secret }
+          : {}),
+    });
+    if (action !== "send") await refresh();
   }
   async function login(provider: string) {
     try {
@@ -146,6 +154,54 @@ export function AccountPage({
               权益管理
             </a>
           )}
+          {account.canSetPassword && (
+            <details className="account-section">
+              <summary>设置登录密码</summary>
+              <form
+                className="email-sign-in"
+                onSubmit={async (event) => {
+                  event.preventDefault();
+                  if (busy) return;
+                  setBusy(true);
+                  try {
+                    await api("/api/account/password/set", {
+                      password: newPassword,
+                    });
+                    setNewPassword("");
+                    await refresh();
+                    setError("登录密码已设置。");
+                  } catch (cause) {
+                    setError(
+                      cause instanceof Error ? cause.message : "设置失败",
+                    );
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+              >
+                <label htmlFor="new-password">新密码</label>
+                <input
+                  id="new-password"
+                  className="field"
+                  type="password"
+                  autoComplete="new-password"
+                  minLength={8}
+                  maxLength={128}
+                  required
+                  disabled={busy}
+                  value={newPassword}
+                  onChange={(ev) => setNewPassword(ev.target.value)}
+                />
+                <Button
+                  variant="primary"
+                  type="submit"
+                  disabled={busy || newPassword.length < 8}
+                >
+                  保存密码
+                </Button>
+              </form>
+            </details>
+          )}
           <section className="account-section">
             <h2>当前权益 · {account.plan}</h2>
             <p className="muted">
@@ -158,12 +214,13 @@ export function AccountPage({
           <section className="account-section">
             <h2>设备同步</h2>
             <p className="muted">
-              原生 App
-              可直接使用邮箱验证码登录。浏览器控制端显示授权码时，可在此确认关联。
+              确认后，此设备将关联到 {account.user.email}。请核对 App
+              中的授权码。
             </p>
             <input
               className="field"
-              placeholder="原生客户端授权码"
+              aria-label="设备授权码"
+              placeholder="设备授权码"
               value={code}
               onChange={(e) => setCode(e.target.value)}
             />
@@ -177,6 +234,9 @@ export function AccountPage({
                     hostLimit?: boolean;
                   }>("/api/account/device-login/approve", { code });
                   setCode("");
+                  const url = new URL(location.href);
+                  url.searchParams.delete("code");
+                  history.replaceState(history.state, "", url);
                   setError(
                     result.hostLimit
                       ? "已登录控制端。被控端名额已满，可移除设备后重新关联。"
@@ -265,71 +325,40 @@ export function AccountPage({
           </section>
         </>
       ) : (
-        <>
+        <section className="sign-in-panel">
           <h1>登录 ReignHub</h1>
-          <p className="muted">
-            登录后可从同一账号的控制端直接访问已关联的被控端。
-          </p>
+          <p className="muted">登录后即可访问同一账号下的设备。</p>
+          {(providers.includes("email") || providers.includes("password")) && (
+            <EmailSignIn
+              methods={providers}
+              busy={busy}
+              setBusy={setBusy}
+              request={emailLogin}
+            />
+          )}
+          {providers.some((p) => p === "google" || p === "github") && (
+            <div className="login-actions">
+              {providers
+                .filter((p) => p === "google" || p === "github")
+                .map((p) => (
+                  <Button key={p} disabled={busy} onClick={() => login(p)}>
+                    {p === "github" ? "GitHub" : "Google"} 登录
+                  </Button>
+                ))}
+            </div>
+          )}
+          {error && (
+            <p className="account-message" role="status">
+              {error}
+            </p>
+          )}
           {legal && (
             <p className="muted account-legal">
               登录即表示你同意 <a href={legal.terms}>服务条款</a>，并已阅读{" "}
               <a href={legal.privacy}>隐私政策</a>。
             </p>
           )}
-          {providers.includes("email") && (
-            <form
-              className="account-section"
-              onSubmit={(ev) => {
-                ev.preventDefault();
-                void emailLogin(true);
-              }}
-            >
-              <label>
-                邮箱
-                <input
-                  className="field"
-                  type="email"
-                  autoComplete="email"
-                  required
-                  value={email}
-                  onChange={(ev) => setEmail(ev.target.value)}
-                />
-              </label>
-              <button
-                type="button"
-                className="button ghost"
-                disabled={busy || !email.trim()}
-                onClick={() => void emailLogin(false)}
-              >
-                发送验证码
-              </button>
-              <label>
-                六位验证码
-                <input
-                  className="field"
-                  inputMode="numeric"
-                  autoComplete="one-time-code"
-                  pattern="[0-9]{6}"
-                  required
-                  value={otp}
-                  onChange={(ev) => setOtp(ev.target.value)}
-                />
-              </label>
-              <button type="submit" className="button" disabled={busy}>
-                邮箱登录
-              </button>
-            </form>
-          )}
-          <div className="login-actions">
-            {providers
-              .filter((p) => p !== "email")
-              .map((p) => (
-                <Button key={p} disabled={busy} onClick={() => login(p)}>
-                  {p === "github" ? "GitHub" : "Google"} 登录
-                </Button>
-              ))}
-          </div>
-        </>
+        </section>
       )}
       {plans.length > 0 && (
         <section className="account-section">
@@ -396,7 +425,7 @@ export function AccountPage({
           )}
         </section>
       )}
-      {error && (
+      {error && account && (
         <p className="account-message" role="status">
           {error}
         </p>

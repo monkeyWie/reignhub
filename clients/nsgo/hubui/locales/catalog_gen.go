@@ -208,6 +208,28 @@ const (
 	textRemoteTerminalHint
 	textPreviewLoading
 	textPreviewRetry
+	textSignInTitle
+	textLoginEmail
+	textLoginEmailCode
+	textLoginEmailHint
+	textSendLoginCode
+	textHaveLoginCode
+	textEditLoginEmail
+	textResendLoginCode
+	textConfirmLogin
+	textLoginService
+	textPairingDeviceID
+	textSignedIn
+	textSignedInHostLimit
+	textLoginCodeSent
+	textLoginPassword
+	textUsePassword
+	textUseEmailCode
+	textBrowserLoginWait
+	textBrowserLoginFailed
+	textBrowserLoginExpired
+	textOpenLoginBrowser
+	textBackToLogin
 	numTexts
 )
 
@@ -341,6 +363,28 @@ var keyOfText = [numTexts]string{
 	"remoteTerminalHint",
 	"previewLoading",
 	"previewRetry",
+	"signInTitle",
+	"loginEmail",
+	"loginEmailCode",
+	"loginEmailHint",
+	"sendLoginCode",
+	"haveLoginCode",
+	"editLoginEmail",
+	"resendLoginCode",
+	"confirmLogin",
+	"loginService",
+	"pairingDeviceID",
+	"signedIn",
+	"signedInHostLimit",
+	"loginCodeSent",
+	"loginPassword",
+	"usePassword",
+	"useEmailCode",
+	"browserLoginWait",
+	"browserLoginFailed",
+	"browserLoginExpired",
+	"openLoginBrowser",
+	"backToLogin",
 }
 
 // textsEn are the messages without arguments in en.
@@ -471,7 +515,29 @@ var textsEn = i18n.NewTexts(""+
 	"Allow remote terminals"+
 	"Paired devices can run commands on this computer."+
 	"Loading original image…"+
-	"Retry",
+	"Retry"+
+	"Sign in to ReignHub"+
+	"Email address"+
+	"Email verification code"+
+	"Sign in to access devices linked to your account."+
+	"Send code"+
+	"I already have a code"+
+	"Change email"+
+	"Resend code"+
+	"Sign in"+
+	"Account service"+
+	"Device ID"+
+	"Signed in"+
+	"Signed in as a controller. Your host device limit has been reached."+
+	"Code sent. Check your email."+
+	"Password"+
+	"Use password"+
+	"Use email code"+
+	"Confirm this device in your browser using the authorization code below."+
+	"Could not open the sign-in page. Try again."+
+	"This sign-in request expired. Start again to connect."+
+	"Open browser"+
+	"Back to sign-in",
 	[]uint16{
 		6,
 		17,
@@ -600,6 +666,28 @@ var textsEn = i18n.NewTexts(""+
 		49,
 		25,
 		5,
+		19,
+		13,
+		23,
+		49,
+		9,
+		21,
+		12,
+		11,
+		7,
+		15,
+		9,
+		9,
+		67,
+		28,
+		8,
+		12,
+		14,
+		71,
+		43,
+		53,
+		12,
+		15,
 	})
 
 // textsZhHans are the messages without arguments in zh-Hans.
@@ -730,7 +818,29 @@ var textsZhHans = i18n.NewTexts(""+
 	"允许远程终端"+
 	"允许已配对设备在这台电脑上运行命令。"+
 	"正在加载原图…"+
-	"重试",
+	"重试"+
+	"登录 ReignHub"+
+	"邮箱地址"+
+	"邮箱验证码"+
+	"登录后即可访问同一账号下的设备。"+
+	"发送验证码"+
+	"已有验证码"+
+	"更换邮箱"+
+	"重新发送"+
+	"登录"+
+	"账号服务地址"+
+	"设备 ID"+
+	"已登录"+
+	"已登录控制端，被控端名额已满"+
+	"验证码已发送，请查看邮箱。"+
+	"密码"+
+	"用密码登录"+
+	"用验证码登录"+
+	"请在浏览器中核对下方授权码，确认关联此设备。"+
+	"无法打开登录页面，请重试。"+
+	"登录申请已过期，请重新登录。"+
+	"打开浏览器"+
+	"返回登录",
 	[]uint16{
 		6,
 		12,
@@ -859,6 +969,28 @@ var textsZhHans = i18n.NewTexts(""+
 		54,
 		21,
 		6,
+		15,
+		12,
+		15,
+		48,
+		15,
+		15,
+		12,
+		12,
+		6,
+		18,
+		9,
+		9,
+		42,
+		39,
+		6,
+		15,
+		18,
+		66,
+		39,
+		42,
+		15,
+		12,
 	})
 
 // texts returns the messages without arguments in lang, nil for a
@@ -2126,3 +2258,157 @@ func PreviewRetry(cx *core.Scope) string { return For(cx).PreviewRetry() }
 
 // PreviewRetry is the package's PreviewRetry in the language of msgs.
 func (msgs Messages) PreviewRetry() string { return msgs.text(textPreviewRetry) }
+
+// SignInTitle says "Sign in to ReignHub"
+// in the language the app shows under cx.
+func SignInTitle(cx *core.Scope) string { return For(cx).SignInTitle() }
+
+// SignInTitle is the package's SignInTitle in the language of msgs.
+func (msgs Messages) SignInTitle() string { return msgs.text(textSignInTitle) }
+
+// LoginEmail says "Email address"
+// in the language the app shows under cx.
+func LoginEmail(cx *core.Scope) string { return For(cx).LoginEmail() }
+
+// LoginEmail is the package's LoginEmail in the language of msgs.
+func (msgs Messages) LoginEmail() string { return msgs.text(textLoginEmail) }
+
+// LoginEmailCode says "Email verification code"
+// in the language the app shows under cx.
+func LoginEmailCode(cx *core.Scope) string { return For(cx).LoginEmailCode() }
+
+// LoginEmailCode is the package's LoginEmailCode in the language of msgs.
+func (msgs Messages) LoginEmailCode() string { return msgs.text(textLoginEmailCode) }
+
+// LoginEmailHint says "Sign in to access devices linked to your account."
+// in the language the app shows under cx.
+func LoginEmailHint(cx *core.Scope) string { return For(cx).LoginEmailHint() }
+
+// LoginEmailHint is the package's LoginEmailHint in the language of msgs.
+func (msgs Messages) LoginEmailHint() string { return msgs.text(textLoginEmailHint) }
+
+// SendLoginCode says "Send code"
+// in the language the app shows under cx.
+func SendLoginCode(cx *core.Scope) string { return For(cx).SendLoginCode() }
+
+// SendLoginCode is the package's SendLoginCode in the language of msgs.
+func (msgs Messages) SendLoginCode() string { return msgs.text(textSendLoginCode) }
+
+// HaveLoginCode says "I already have a code"
+// in the language the app shows under cx.
+func HaveLoginCode(cx *core.Scope) string { return For(cx).HaveLoginCode() }
+
+// HaveLoginCode is the package's HaveLoginCode in the language of msgs.
+func (msgs Messages) HaveLoginCode() string { return msgs.text(textHaveLoginCode) }
+
+// EditLoginEmail says "Change email"
+// in the language the app shows under cx.
+func EditLoginEmail(cx *core.Scope) string { return For(cx).EditLoginEmail() }
+
+// EditLoginEmail is the package's EditLoginEmail in the language of msgs.
+func (msgs Messages) EditLoginEmail() string { return msgs.text(textEditLoginEmail) }
+
+// ResendLoginCode says "Resend code"
+// in the language the app shows under cx.
+func ResendLoginCode(cx *core.Scope) string { return For(cx).ResendLoginCode() }
+
+// ResendLoginCode is the package's ResendLoginCode in the language of msgs.
+func (msgs Messages) ResendLoginCode() string { return msgs.text(textResendLoginCode) }
+
+// ConfirmLogin says "Sign in"
+// in the language the app shows under cx.
+func ConfirmLogin(cx *core.Scope) string { return For(cx).ConfirmLogin() }
+
+// ConfirmLogin is the package's ConfirmLogin in the language of msgs.
+func (msgs Messages) ConfirmLogin() string { return msgs.text(textConfirmLogin) }
+
+// LoginService says "Account service"
+// in the language the app shows under cx.
+func LoginService(cx *core.Scope) string { return For(cx).LoginService() }
+
+// LoginService is the package's LoginService in the language of msgs.
+func (msgs Messages) LoginService() string { return msgs.text(textLoginService) }
+
+// PairingDeviceID says "Device ID"
+// in the language the app shows under cx.
+func PairingDeviceID(cx *core.Scope) string { return For(cx).PairingDeviceID() }
+
+// PairingDeviceID is the package's PairingDeviceID in the language of msgs.
+func (msgs Messages) PairingDeviceID() string { return msgs.text(textPairingDeviceID) }
+
+// SignedIn says "Signed in"
+// in the language the app shows under cx.
+func SignedIn(cx *core.Scope) string { return For(cx).SignedIn() }
+
+// SignedIn is the package's SignedIn in the language of msgs.
+func (msgs Messages) SignedIn() string { return msgs.text(textSignedIn) }
+
+// SignedInHostLimit says "Signed in as a controller. Your host device limit has been reached."
+// in the language the app shows under cx.
+func SignedInHostLimit(cx *core.Scope) string { return For(cx).SignedInHostLimit() }
+
+// SignedInHostLimit is the package's SignedInHostLimit in the language of msgs.
+func (msgs Messages) SignedInHostLimit() string { return msgs.text(textSignedInHostLimit) }
+
+// LoginCodeSent says "Code sent. Check your email."
+// in the language the app shows under cx.
+func LoginCodeSent(cx *core.Scope) string { return For(cx).LoginCodeSent() }
+
+// LoginCodeSent is the package's LoginCodeSent in the language of msgs.
+func (msgs Messages) LoginCodeSent() string { return msgs.text(textLoginCodeSent) }
+
+// LoginPassword says "Password"
+// in the language the app shows under cx.
+func LoginPassword(cx *core.Scope) string { return For(cx).LoginPassword() }
+
+// LoginPassword is the package's LoginPassword in the language of msgs.
+func (msgs Messages) LoginPassword() string { return msgs.text(textLoginPassword) }
+
+// UsePassword says "Use password"
+// in the language the app shows under cx.
+func UsePassword(cx *core.Scope) string { return For(cx).UsePassword() }
+
+// UsePassword is the package's UsePassword in the language of msgs.
+func (msgs Messages) UsePassword() string { return msgs.text(textUsePassword) }
+
+// UseEmailCode says "Use email code"
+// in the language the app shows under cx.
+func UseEmailCode(cx *core.Scope) string { return For(cx).UseEmailCode() }
+
+// UseEmailCode is the package's UseEmailCode in the language of msgs.
+func (msgs Messages) UseEmailCode() string { return msgs.text(textUseEmailCode) }
+
+// BrowserLoginWait says "Confirm this device in your browser using the authorization code below."
+// in the language the app shows under cx.
+func BrowserLoginWait(cx *core.Scope) string { return For(cx).BrowserLoginWait() }
+
+// BrowserLoginWait is the package's BrowserLoginWait in the language of msgs.
+func (msgs Messages) BrowserLoginWait() string { return msgs.text(textBrowserLoginWait) }
+
+// BrowserLoginFailed says "Could not open the sign-in page. Try again."
+// in the language the app shows under cx.
+func BrowserLoginFailed(cx *core.Scope) string { return For(cx).BrowserLoginFailed() }
+
+// BrowserLoginFailed is the package's BrowserLoginFailed in the language of msgs.
+func (msgs Messages) BrowserLoginFailed() string { return msgs.text(textBrowserLoginFailed) }
+
+// BrowserLoginExpired says "This sign-in request expired. Start again to connect."
+// in the language the app shows under cx.
+func BrowserLoginExpired(cx *core.Scope) string { return For(cx).BrowserLoginExpired() }
+
+// BrowserLoginExpired is the package's BrowserLoginExpired in the language of msgs.
+func (msgs Messages) BrowserLoginExpired() string { return msgs.text(textBrowserLoginExpired) }
+
+// OpenLoginBrowser says "Open browser"
+// in the language the app shows under cx.
+func OpenLoginBrowser(cx *core.Scope) string { return For(cx).OpenLoginBrowser() }
+
+// OpenLoginBrowser is the package's OpenLoginBrowser in the language of msgs.
+func (msgs Messages) OpenLoginBrowser() string { return msgs.text(textOpenLoginBrowser) }
+
+// BackToLogin says "Back to sign-in"
+// in the language the app shows under cx.
+func BackToLogin(cx *core.Scope) string { return For(cx).BackToLogin() }
+
+// BackToLogin is the package's BackToLogin in the language of msgs.
+func (msgs Messages) BackToLogin() string { return msgs.text(textBackToLogin) }

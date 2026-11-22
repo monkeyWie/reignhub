@@ -65,9 +65,9 @@ func TestNoticeAboveModalAndWithinViewport(t *testing.T) {
 			t.Run(fmt.Sprintf("width-%d-dark-%t", width, dark), func(t *testing.T) {
 				app, s := noticeFixture(t, width, dark)
 				app.Press("id:open-modal")
-				app.Type("id:connection-code", "fixture-draft")
-				app.WaitUntil(time.Second, func() bool { return app.Find("id:connection-code").Text == "fixture-draft" })
-				inputID := app.Find("id:connection-code").ID
+				app.Type(pairingInput, "01234")
+				app.WaitUntil(time.Second, func() bool { return app.Find(pairingInput).Text == "01234" })
+				inputID := app.Find(pairingInput).ID
 				// An asynchronous result can arrive while a modal is already open.
 				app.Post(func() { s.cx.Post(func() { s.openLink(s.cx, Message{}, "fixture.go:12") }) })
 				app.WaitFor("id:notice", time.Second)
@@ -81,8 +81,8 @@ func TestNoticeAboveModalAndWithinViewport(t *testing.T) {
 				if app.Exists("id:notice") {
 					t.Fatal("notice close was blocked by modal")
 				}
-				input := app.Find("id:connection-code")
-				if input.ID != inputID || input.Text != "fixture-draft" {
+				input := app.Find(pairingInput)
+				if input.ID != inputID || input.Text != "01234" {
 					t.Fatalf("notice changed modal input: ID %v -> %v, text %q", inputID, input.ID, input.Text)
 				}
 				app.PressAt("id:dialog-connect-close", core.Point{X: 12, Y: 12})

@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"github.com/monkeyWie/reignhub/internal/device"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -165,8 +166,8 @@ func CallContext(parent context.Context, raw string) string {
 		case "client.assetCache.clear":
 			e = h.Assets.Clear(in.Target)
 		}
-	case "client.account.send", "client.account.verify", "client.account.status", "client.account.devices":
-		out, e = h.Account(ctx, p.Service, p.Name, strings.TrimPrefix(in.Method, "client.account."), p.Email, p.OTP)
+	case "client.account.start", "client.account.poll", "client.account.password", "client.account.send", "client.account.verify", "client.account.status", "client.account.devices":
+		out, e = h.Account(ctx, p.Service, p.Name, strings.TrimPrefix(in.Method, "client.account."), device.AccountRequest{Email: p.Email, OTP: p.OTP, Password: p.Password, ID: p.ID, Provider: p.Provider})
 	case "client.list":
 		out, e = h.List()
 	case "client.presence":
@@ -236,7 +237,7 @@ func CallContext(parent context.Context, raw string) string {
 			r := in.Request
 			r.Method = in.Method
 			r.Params = in.Params
-			if in.Method == "host.account.verify" {
+			if in.Method == "host.account.verify" || in.Method == "host.account.password" || in.Method == "host.account.start" {
 				var info struct {
 					ServiceURL string `json:"serviceUrl"`
 				}
@@ -247,7 +248,7 @@ func CallContext(parent context.Context, raw string) string {
 				if err != nil {
 					return answer(nil, err)
 				}
-				r.Params, _ = json.Marshal(map[string]string{"controllerToken": token, "serviceUrl": info.ServiceURL, "email": p.Email, "otp": p.OTP})
+				r.Params, _ = json.Marshal(map[string]string{"controllerToken": token, "serviceUrl": info.ServiceURL, "email": p.Email, "otp": p.OTP, "password": p.Password, "provider": p.Provider})
 			}
 			e = embedded.Call(ctx, r, &out)
 		}

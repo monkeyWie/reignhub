@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -39,4 +40,29 @@ func WaitAccountHost(ctx context.Context, service, token, binding string) error 
 		case <-tick.C:
 		}
 	}
+}
+
+// AccountRequest carries the inputs for a single authenticated account operation.
+type AccountRequest struct {
+	Email           string `json:"email,omitempty"`
+	OTP             string `json:"otp,omitempty"`
+	Password        string `json:"password,omitempty"`
+	Provider        string `json:"provider,omitempty"`
+	ID              string `json:"id,omitempty"`
+	ControllerToken string `json:"controllerToken,omitempty"`
+}
+
+func AccountAction(ctx context.Context, service, token, action string, params AccountRequest) (any, error) {
+	paths := map[string]string{
+		"send": "/api/account/device-email/send", "verify": "/api/account/device-email/verify",
+		"password": "/api/account/device-email/password", "start": "/api/account/device-login/start",
+		"poll": "/api/account/device-login/poll", "status": "/api/account/device-status", "devices": "/api/account/device-list",
+	}
+	path, ok := paths[action]
+	if !ok {
+		return nil, fmt.Errorf("无效账号操作")
+	}
+	var out map[string]any
+	err := Post(ctx, service, token, path, params, &out)
+	return out, err
 }

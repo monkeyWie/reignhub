@@ -193,7 +193,7 @@ type feedbackAPI struct {
 }
 
 func (f *feedbackAPI) Call(ctx context.Context, method string, p Object, target string, r Object) (any, error) {
-	if method == "host.configure" || method == "host.respond" || method == "client.call" && str(r, "method") == "decide" {
+	if method == "host.account.send" || method == "host.account.verify" || method == "host.configure" || method == "host.respond" || method == "client.call" && str(r, "method") == "decide" {
 		request := feedbackRequest{method: method, params: copyObject(p), result: make(chan error, 1)}
 		select {
 		case f.requests <- request:

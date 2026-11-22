@@ -192,6 +192,14 @@ and disposing the workspace cancels its pending timer.
 
 ## Dialogs and notification layers
 
+Email sign-in takes an address first, then a six-digit code. Allow users who
+already have a code to enter it without requesting another email. Email codes
+and numeric pairing device IDs use six visible cells backed by one accessible
+text field. Size the six cells equally across the full form width, with consistent
+gaps and both ends aligned to the other fields. Preserve leading zeroes,
+whole-code paste and scanned device IDs.
+Enable the submit action when all six digits are present.
+
 Modal dialogs place an accessible X close control at the top right, reachable in normal, pending, failed and expired states. Keep the footer to at most two decision buttons by default; extra actions need a specific workflow reason. Do not add a third footer button merely to make the dialog dismissible. Informational or expired dialogs may have no footer actions. Use the shared dialog header; custom modal layouts follow the same placement.
 
 Dismissal never implies consent. Expired or withdrawn requests stop offering invalid actions and explain how to start a fresh request; ordinary failures keep a usable retry and close path. Keyboard, back and backdrop behavior must agree with the visible controls. A dismissed request must not immediately reopen without a new user action or request.

@@ -549,29 +549,20 @@ func (m *Manager) Local(ctx context.Context, r control.Request) (any, error) {
 		}
 		m.cfg.Agents[edit.ID] = edit.Agent
 		return map[string]bool{"restartRequired": true}, m.cfg.Save()
-	case "host.account.send", "host.account.verify", "host.account.status", "host.account.devices":
+	case "host.account.start", "host.account.poll", "host.account.password", "host.account.send", "host.account.verify", "host.account.status", "host.account.devices":
 		m.mu.Lock()
 		i := m.state.Identity
 		m.mu.Unlock()
-		paths := map[string]string{"host.account.send": "/api/account/device-email/send", "host.account.verify": "/api/account/device-email/verify", "host.account.status": "/api/account/device-status", "host.account.devices": "/api/account/device-list"}
-		payload := map[string]any{"email": in.Email, "otp": in.OTP}
-		if r.Method == "host.account.verify" {
-			var companion struct{ ControllerToken, ServiceURL string }
-			if len(r.Params) > 0 {
-				if err := json.Unmarshal(r.Params, &companion); err != nil {
-					return nil, err
-				}
-			}
-			if companion.ControllerToken != "" {
-				if i.Service != companion.ServiceURL {
-					return nil, fmt.Errorf("设备服务地址已变更，请重新登录")
-				}
-				payload["controllerToken"] = companion.ControllerToken
+		var params device.AccountRequest
+		if len(r.Params) > 0 {
+			if err := json.Unmarshal(r.Params, &params); err != nil {
+				return nil, err
 			}
 		}
-		var out map[string]any
-		err := device.Post(ctx, i.Service, i.Token, paths[r.Method], payload, &out)
-		return out, err
+		if params.ControllerToken != "" && i.Service != in.ServiceURL {
+			return nil, fmt.Errorf("设备服务地址已变更，请重新登录")
+		}
+		return device.AccountAction(ctx, i.Service, i.Token, strings.TrimPrefix(r.Method, "host.account."), params)
 	case "host.info":
 		m.mu.Lock()
 		defer m.mu.Unlock()

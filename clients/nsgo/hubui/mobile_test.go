@@ -60,7 +60,7 @@ func testMobileDeviceAndScanner(t *testing.T, os core.OS, scan bool) {
 	code := pairingCode(Object{"service": DefaultService, "connectionId": "654321", "public": "fixture-public"})
 	app.Emit("id:live-qr-camera", "code", code)
 	app.Find("id:dialog-connect")
-	if app.Find("id:connection-code").Text != "654321" {
+	if app.Find(pairingInput).Text != "654321" {
 		t.Fatal("scan did not prefill target ID")
 	}
 	if app.Exists("id:live-qr-camera") {

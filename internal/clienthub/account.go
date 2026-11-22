@@ -2,13 +2,12 @@ package clienthub
 
 import (
 	"context"
-	"fmt"
 	"github.com/monkeyWie/reignhub/internal/device"
 )
 
 // Account calls use a device credential, never an OAuth cookie or a refresh
 // token copied into the native application. The verified email login binds the authenticated device.
-func (h *Hub) Account(ctx context.Context, service, name, action, email, otp string) (any, error) {
+func (h *Hub) Account(ctx context.Context, service, name, action string, params device.AccountRequest) (any, error) {
 	origin, err := device.ServiceURL(service)
 	if err != nil {
 		return nil, err
@@ -17,14 +16,7 @@ func (h *Hub) Account(ctx context.Context, service, name, action, email, otp str
 	if err != nil {
 		return nil, err
 	}
-	paths := map[string]string{"send": "/api/account/device-email/send", "verify": "/api/account/device-email/verify", "status": "/api/account/device-status", "devices": "/api/account/device-list"}
-	path, ok := paths[action]
-	if !ok {
-		return nil, fmt.Errorf("无效账号操作")
-	}
-	var out map[string]any
-	err = device.Post(ctx, origin, identity.Token, path, map[string]any{"email": email, "otp": otp}, &out)
-	return out, err
+	return device.AccountAction(ctx, origin, identity.Token, action, params)
 }
 
 // ControllerCredential supplies the companion identity to the local host's login request.

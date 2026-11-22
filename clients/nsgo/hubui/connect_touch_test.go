@@ -56,7 +56,7 @@ func testTouchConnectionButtons(t *testing.T, height, keyboard core.Points) {
 	open := func() {
 		t.Helper()
 		app.Press("id:connect-device")
-		app.Type("id:connection-code", "123456")
+		app.Type(pairingInput, "123456")
 		if keyboard > 0 {
 			app.SetEnvironment(core.Environment{OS: core.OSAndroid, Idiom: core.IdiomPhone, KeyboardHeight: keyboard, SafeArea: core.Edges{Top: 24, Bottom: 16}})
 		}
@@ -64,6 +64,7 @@ func testTouchConnectionButtons(t *testing.T, height, keyboard core.Points) {
 		checkButtons()
 	}
 	open()
+	assertCodeFillsRow(t, app, "connection-code", "connect-submit")
 	app.Screenshot(fmt.Sprintf("touch-connect-%g-keyboard-%g", height, keyboard))
 	app.PressAt("id:dialog-cancel", core.Point{X: 20, Y: 20})
 	app.WaitUntil(time.Second, func() bool { return !app.Exists("id:dialog-connect") })

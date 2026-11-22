@@ -14,6 +14,8 @@ import (
 	"github.com/nsgo-dev/nsgo/nsgotest"
 )
 
+const pairingInput = "id:connection-code >> label:/.+/"
+
 type pairingFixture struct {
 	*demoAPI
 	steps           chan connectivity.Progress
@@ -50,7 +52,7 @@ func startPairing(t *testing.T) (*nsgotest.App, *pairingFixture) {
 	showSessionDirectory(t, app)
 	app.WaitFor("id:connect-device", time.Second)
 	app.Press("id:connect-device")
-	app.Type("id:connection-code", "123456")
+	app.Type(pairingInput, "123456")
 	app.Press("id:connect-submit")
 	app.WaitFor("id:connection-loading", time.Second)
 	app.WaitFor("text:请在被控电脑的 ReignHub 中允许此次连接", time.Second)
@@ -94,8 +96,8 @@ func TestPairingFailureEditKeepsServiceAndDeviceID(t *testing.T) {
 	f.finish <- errors.New("被控设备离线")
 	app.WaitFor("text:被控电脑不在线", time.Second)
 	app.Press("id:connect-edit")
-	app.WaitFor("id:connection-code", time.Second)
-	if app.Find("id:connection-code").Text != "123456" || app.Find("id:connection-service").Text != DefaultService {
+	app.WaitFor(pairingInput, time.Second)
+	if app.Find(pairingInput).Text != "123456" || app.Find("id:connection-service").Text != DefaultService {
 		t.Fatal("editing discarded the target")
 	}
 }

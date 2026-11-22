@@ -142,12 +142,17 @@ func (s *State) dialogView(cx *core.Scope, kind string) core.Node {
 			origin = str(s.host, "serviceUrl")
 		}
 		service := core.NewSignal(cx, origin)
-		params := Object{"service": service.Get(), "name": s.clientName}
-		if !s.api.CanHost() {
-			children = append(children, field("account-service", "服务地址", service, false))
-		}
 		if s.api.CanHost() {
 			prefix = "host.account."
+		}
+		if !isWeb() && !flag(s.accountStatus, "linked") {
+			title = locales.For(cx).SignInTitle()
+			d.Style.Width = core.Pt(396)
+			children = append(children, s.emailSignIn(cx, service, prefix, close))
+			break
+		}
+		if !s.api.CanHost() {
+			children = append(children, field("account-service", "服务地址", service, false))
 		}
 		children = append(children, label(cx, "同一账号的控制端可以直接访问已关联的被控端。", 13, true))
 		if isWeb() && s.accountLogin != nil {
@@ -163,26 +168,9 @@ func (s *State) dialogView(cx *core.Scope, kind string) core.Node {
 				s.connect(Object{"service": service.Get(), "code": str(d, "connectionId"), "public": str(d, "public"), "name": s.clientName})
 			}))
 		}
-		if !isWeb() && !flag(s.accountStatus, "linked") {
-			email := core.NewSignal(cx, "")
-			otp := core.NewSignal(cx, "")
-			children = append(children, field("account-email", "邮箱", email, false), field("account-otp", "六位邮箱验证码", otp, false))
-			footer = append(footer, s.actionButton(cx, "account-start", "发送验证码", nil, "outline", func() {
-				s.call("account-start", prefix+"send", Object{"service": service.Get(), "name": s.clientName, "email": strings.TrimSpace(email.Get())}, func(any) { s.showNotice("验证码已发送，请查看邮箱") })
-			}), s.actionButton(cx, "account-verify", "登录", nil, "primary", func() {
-				s.call("account-verify", prefix+"verify", Object{"service": service.Get(), "name": s.clientName, "email": strings.TrimSpace(email.Get()), "otp": strings.TrimSpace(otp.Get())}, func(v any) {
-					s.refreshAccountStatus()
-					close()
-					if flag(object(v), "hostLimit") {
-						s.showNotice("已登录控制端，被控端名额已满")
-					} else {
-						s.showNotice("已登录")
-					}
-				})
-			}))
-		} else if isWeb() && !flag(s.accountStatus, "linked") {
+		if isWeb() && !flag(s.accountStatus, "linked") {
 			footer = append(footer, s.actionButton(cx, "account-start", "登录与绑定", nil, "primary", func() {
-				params["service"] = service.Get()
+				params := Object{"service": service.Get(), "name": s.clientName}
 				s.call("account-start", prefix+"start", params, func(v any) {
 					s.accountLogin = object(v)
 					if str(s.accountLogin, "state") == "approved" {
@@ -238,21 +226,23 @@ func (s *State) dialogView(cx *core.Scope, kind string) core.Node {
 			if initialCode == "" {
 				initialCode = str(s.scanned, "code")
 			}
-			code.Set(initialCode)
+			code.Set(strings.NewReplacer(" ", "", "-", "").Replace(initialCode))
 		}
 		if !isWeb() {
 			children = append(children, field("connection-service", "服务地址（HTTP / HTTPS）", service, false))
 		}
-		children = append(children, field("connection-code", "设备 ID，例如 123 456", code, false), field("connection-password", "访问密码（留空则请求主机确认）", password, true), ui.Checkbox{TestID: "relay-only", Text: "仅用中继（用于诊断）", Checked: relay.Get, OnChange: relay.Set}, label(cx, "当前设备会保存配对身份与会话缓存，请仅在可信设备上使用。", 12, true))
-		footer = append(footer, button(cx, "connect-submit", "连接", nil, "primary", func() {
-			p := Object{"service": strings.TrimRight(strings.TrimSpace(service.Get()), "/"), "code": strings.NewReplacer(" ", "", "-", "").Replace(code.Get()), "password": password.Get(), "relayOnly": relay.Get(), "name": s.clientName}
+		children = append(children, codeField(cx, "connection-code", locales.For(cx).PairingDeviceID(), code, nil, nil), field("connection-password", "访问密码（留空则请求主机确认）", password, true), ui.Checkbox{TestID: "relay-only", Text: "仅用中继（用于诊断）", Checked: relay.Get, OnChange: relay.Set}, label(cx, "当前设备会保存配对身份与会话缓存，请仅在可信设备上使用。", 12, true))
+		submit := button(cx, "connect-submit", "连接", nil, "primary", func() {
+			p := Object{"service": strings.TrimRight(strings.TrimSpace(service.Get()), "/"), "code": code.Get(), "password": password.Get(), "relayOnly": relay.Get(), "name": s.clientName}
 			if s.scanned != nil {
 				p["public"] = s.scanned["public"]
 			}
 			s.scanned = nil
 			close()
 			s.connect(p)
-		}))
+		}).(core.View)
+		submit.Disabled = func() bool { return !completeCode(code.Get()) }
+		footer = append(footer, submit)
 	case kind == "service-settings" || kind == "password":
 		url := str(s.host, "serviceUrl")
 		if url == "" {
