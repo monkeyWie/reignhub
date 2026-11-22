@@ -78,7 +78,7 @@ func (s *State) dialogView(cx *core.Scope, kind string) core.Node {
 		case kind == "agent-config" || strings.HasPrefix(kind, "agent-config:"):
 			key = "save-agent"
 		case kind == "account":
-			return s.actionPending("account-start") || s.actionPending("account-refresh")
+			return s.actionPending("account-start") || s.actionPending("account-refresh") || s.actionPending("account-verify")
 		case kind == "password" || kind == "service-settings":
 			key = "dialog-save"
 		case strings.HasPrefix(kind, "activate:"):
@@ -150,7 +150,7 @@ func (s *State) dialogView(cx *core.Scope, kind string) core.Node {
 			prefix = "host.account."
 		}
 		children = append(children, label(cx, "同一账号的控制端可以直接访问已关联的被控端。", 13, true))
-		if s.accountLogin != nil {
+		if isWeb() && s.accountLogin != nil {
 			children = append(children, label(cx, "授权码："+str(s.accountLogin, "code"), 17, false), s.copyButton(cx, "copy-login-code", "复制授权码", "outline", func() string { return str(s.accountLogin, "code") }), button(cx, "open-login-page", "在浏览器中打开登录页面", nil, "outline", func() { cx.OpenURL(str(s.accountLogin, "url"), nil) }))
 		}
 		if s.accountStatus != nil {
@@ -160,21 +160,41 @@ func (s *State) dialogView(cx *core.Scope, kind string) core.Node {
 			d := entry
 			children = append(children, button(cx, "account-device-"+str(d, "id"), str(d, "name")+" · "+str(d, "connectionId"), nil, "outline", func() {
 				close()
-				s.connect(Object{"service": service.Get(), "code": str(d, "connectionId"), "public": str(d, "public"), "remember": true, "name": s.clientName})
+				s.connect(Object{"service": service.Get(), "code": str(d, "connectionId"), "public": str(d, "public"), "name": s.clientName})
 			}))
 		}
-		footer = append(footer, s.actionButton(cx, "account-start", "登录与绑定", nil, "primary", func() {
-			params["service"] = service.Get()
-			s.call("account-start", prefix+"start", params, func(v any) {
-				s.accountLogin = object(v)
-				if str(s.accountLogin, "state") == "approved" {
-					s.accountLogin = nil
+		if !isWeb() && !flag(s.accountStatus, "linked") {
+			email := core.NewSignal(cx, "")
+			otp := core.NewSignal(cx, "")
+			children = append(children, field("account-email", "邮箱", email, false), field("account-otp", "六位邮箱验证码", otp, false))
+			footer = append(footer, s.actionButton(cx, "account-start", "发送验证码", nil, "outline", func() {
+				s.call("account-start", prefix+"send", Object{"service": service.Get(), "name": s.clientName, "email": strings.TrimSpace(email.Get())}, func(any) { s.showNotice("验证码已发送，请查看邮箱") })
+			}), s.actionButton(cx, "account-verify", "登录", nil, "primary", func() {
+				s.call("account-verify", prefix+"verify", Object{"service": service.Get(), "name": s.clientName, "email": strings.TrimSpace(email.Get()), "otp": strings.TrimSpace(otp.Get())}, func(v any) {
 					s.refreshAccountStatus()
-					return
-				}
-				cx.OpenURL(str(s.accountLogin, "url"), nil)
-			})
-		}), s.actionButton(cx, "account-refresh", "刷新账号设备", nil, "outline", func() {
+					close()
+					if flag(object(v), "hostLimit") {
+						s.showNotice("已登录控制端，被控端名额已满")
+					} else {
+						s.showNotice("已登录")
+					}
+				})
+			}))
+		} else if isWeb() && !flag(s.accountStatus, "linked") {
+			footer = append(footer, s.actionButton(cx, "account-start", "登录与绑定", nil, "primary", func() {
+				params["service"] = service.Get()
+				s.call("account-start", prefix+"start", params, func(v any) {
+					s.accountLogin = object(v)
+					if str(s.accountLogin, "state") == "approved" {
+						s.accountLogin = nil
+						s.refreshAccountStatus()
+						return
+					}
+					cx.OpenURL(str(s.accountLogin, "url"), nil)
+				})
+			}))
+		}
+		footer = append(footer, s.actionButton(cx, "account-refresh", "刷新账号设备", nil, "outline", func() {
 			params := Object{"service": service.Get(), "name": s.clientName}
 			loginID := str(s.accountLogin, "id")
 			s.runAction("account-refresh", func(ctx context.Context) (any, error) {
@@ -211,7 +231,6 @@ func (s *State) dialogView(cx *core.Scope, kind string) core.Node {
 		service := core.NewSignal(cx, serviceOrigin())
 		code := core.NewSignal(cx, "")
 		password := core.NewSignal(cx, "")
-		remember := core.NewSignal(cx, true)
 		relay := core.NewSignal(cx, false)
 		if s.scanned != nil {
 			service.Set(str(s.scanned, "service"))
@@ -224,9 +243,9 @@ func (s *State) dialogView(cx *core.Scope, kind string) core.Node {
 		if !isWeb() {
 			children = append(children, field("connection-service", "服务地址（HTTP / HTTPS）", service, false))
 		}
-		children = append(children, field("connection-code", "设备 ID，例如 123 456", code, false), field("connection-password", "访问密码（留空则请求主机确认）", password, true), ui.Checkbox{TestID: "remember-device", Text: "记住此设备授权", Checked: remember.Get, OnChange: remember.Set}, ui.Checkbox{TestID: "relay-only", Text: "仅用中继（用于诊断）", Checked: relay.Get, OnChange: relay.Set}, label(cx, "当前设备会保存配对身份与会话缓存，请仅在可信设备上使用。", 12, true))
+		children = append(children, field("connection-code", "设备 ID，例如 123 456", code, false), field("connection-password", "访问密码（留空则请求主机确认）", password, true), ui.Checkbox{TestID: "relay-only", Text: "仅用中继（用于诊断）", Checked: relay.Get, OnChange: relay.Set}, label(cx, "当前设备会保存配对身份与会话缓存，请仅在可信设备上使用。", 12, true))
 		footer = append(footer, button(cx, "connect-submit", "连接", nil, "primary", func() {
-			p := Object{"service": strings.TrimRight(strings.TrimSpace(service.Get()), "/"), "code": strings.NewReplacer(" ", "", "-", "").Replace(code.Get()), "password": password.Get(), "remember": remember.Get(), "relayOnly": relay.Get(), "name": s.clientName}
+			p := Object{"service": strings.TrimRight(strings.TrimSpace(service.Get()), "/"), "code": strings.NewReplacer(" ", "", "-", "").Replace(code.Get()), "password": password.Get(), "relayOnly": relay.Get(), "name": s.clientName}
 			if s.scanned != nil {
 				p["public"] = s.scanned["public"]
 			}
@@ -549,7 +568,7 @@ func (s *State) hostAuthorizationDialog(cx *core.Scope, id string, close func())
 		if terminal {
 			children = append(children, label(cx, "此授权请求已过期或已被撤回。请在控制端重新发起连接。", 13, true))
 		} else {
-			children = append(children, label(cx, "请求访问这台电脑上的 Agent。", 13, false), label(cx, "设备指纹："+str(request, "fingerprint"), 11, true), label(cx, choose(flag(request, "remember"), "允许后记住此控制设备，可在授权列表撤销。", "临时授权 8 小时，期间可再次连接。"), 12, true))
+			children = append(children, label(cx, "请求访问这台电脑上的 Agent。", 13, false), label(cx, "设备指纹："+str(request, "fingerprint"), 11, true), label(cx, "允许后，此控制端可持续访问，直到你撤销授权。", 12, true))
 			pending := func() bool { return s.actionPending("host-respond:" + id) }
 			respond := func(allow bool) {
 				s.runAction("host-respond:"+id, func(ctx context.Context) (any, error) {

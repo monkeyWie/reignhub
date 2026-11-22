@@ -37,7 +37,7 @@ func TestOfflineHostFailsBeforeRequestingApproval(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	ctx = connectivity.WithProgress(ctx, func(p connectivity.Progress) { stages = append(stages, p.Stage) })
-	_, err = h.Connect(ctx, server.URL, "654321", "", "", "Pixel", true, false)
+	_, err = h.Connect(ctx, server.URL, "654321", "", "", "Pixel", false)
 	if err == nil || !strings.Contains(err.Error(), "离线") || pairRequests != 0 {
 		t.Fatalf("offline connection: %v requests=%d", err, pairRequests)
 	}

@@ -130,8 +130,8 @@ func CallContext(parent context.Context, raw string) string {
 		return answer(nil, err)
 	}
 	var p struct {
-		Service, Code, Public, Password, Name, ID, Provider string
-		Remember, RelayOnly                                 bool
+		Service, Code, Public, Password, Name, ID, Provider, Email, OTP string
+		RelayOnly                                                       bool
 	}
 	if len(in.Params) > 0 {
 		if e := json.Unmarshal(in.Params, &p); e != nil {
@@ -165,14 +165,14 @@ func CallContext(parent context.Context, raw string) string {
 		case "client.assetCache.clear":
 			e = h.Assets.Clear(in.Target)
 		}
-	case "client.account.start", "client.account.poll", "client.account.status", "client.account.devices":
-		out, e = h.Account(ctx, p.Service, p.Name, strings.TrimPrefix(in.Method, "client.account."), p.ID)
+	case "client.account.send", "client.account.verify", "client.account.status", "client.account.devices":
+		out, e = h.Account(ctx, p.Service, p.Name, strings.TrimPrefix(in.Method, "client.account."), p.Email, p.OTP)
 	case "client.list":
 		out, e = h.List()
 	case "client.presence":
 		out, e = h.Presence(ctx)
 	case "client.connect":
-		_, e = h.Connect(ctx, p.Service, p.Code, p.Public, p.Password, p.Name, p.Remember, p.RelayOnly)
+		_, e = h.Connect(ctx, p.Service, p.Code, p.Public, p.Password, p.Name, p.RelayOnly)
 		if e == nil {
 			out, e = h.List()
 		}
@@ -236,7 +236,7 @@ func CallContext(parent context.Context, raw string) string {
 			r := in.Request
 			r.Method = in.Method
 			r.Params = in.Params
-			if in.Method == "host.account.start" {
+			if in.Method == "host.account.verify" {
 				var info struct {
 					ServiceURL string `json:"serviceUrl"`
 				}
@@ -247,7 +247,7 @@ func CallContext(parent context.Context, raw string) string {
 				if err != nil {
 					return answer(nil, err)
 				}
-				r.Params, _ = json.Marshal(map[string]string{"controllerToken": token, "serviceUrl": info.ServiceURL})
+				r.Params, _ = json.Marshal(map[string]string{"controllerToken": token, "serviceUrl": info.ServiceURL, "email": p.Email, "otp": p.OTP})
 			}
 			e = embedded.Call(ctx, r, &out)
 		}

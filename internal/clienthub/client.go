@@ -189,7 +189,7 @@ func (h *Hub) Presence(ctx context.Context) ([]device.DeviceStatus, error) {
 	return device.Presence(ctx, targets), ctx.Err()
 }
 
-func (h *Hub) Connect(ctx context.Context, service, code, public, password, name string, remember, relayOnly bool) (Saved, error) {
+func (h *Hub) Connect(ctx context.Context, service, code, public, password, name string, relayOnly bool) (Saved, error) {
 	origin, err := device.ServiceURL(service)
 	if err != nil {
 		return Saved{}, err
@@ -204,10 +204,10 @@ func (h *Hub) Connect(ctx context.Context, service, code, public, password, name
 			return Saved{}, err
 		}
 		if saved.Service == origin && saved.ConnectionID == code && saved.AccountBinding == "" && saved.Key != "" && (saved.Expires == 0 || saved.Expires > time.Now().Unix()) {
-			return h.connect(ctx, origin, code, public, password, name, remember, relayOnly, false, &saved)
+			return h.connect(ctx, origin, code, public, password, name, relayOnly, false, &saved)
 		}
 	}
-	return h.connect(ctx, origin, code, public, password, name, remember, relayOnly, false, nil)
+	return h.connect(ctx, origin, code, public, password, name, relayOnly, false, nil)
 }
 
 // Reconnect only reuses an existing valid grant. It never requests new approval
@@ -240,15 +240,15 @@ func (h *Hub) Reconnect(ctx context.Context, id string) (Saved, error) {
 		_ = old.Close()
 	}
 	connectivity.Report(ctx, "resume", "正在复用设备配对与连接配置", connectivity.StageTimeout)
-	result, err := h.connect(ctx, s.Service, s.ConnectionID, s.Public, "", "", true, s.RelayOnly, true, &s)
+	result, err := h.connect(ctx, s.Service, s.ConnectionID, s.Public, "", "", s.RelayOnly, true, &s)
 	if err == nil || ctx.Err() != nil {
 		return result, err
 	}
 	connectivity.Note(ctx, "resume-fallback", "retry", "快速恢复未成功，重新查找设备", err.Error(), "warning")
-	return h.connect(ctx, s.Service, s.ConnectionID, s.Public, "", "", true, s.RelayOnly, true, nil)
+	return h.connect(ctx, s.Service, s.ConnectionID, s.Public, "", "", s.RelayOnly, true, nil)
 }
 
-func (h *Hub) connect(ctx context.Context, service, code, public, password, name string, remember, relayOnly, reconnectOnly bool, cached *Saved) (Saved, error) {
+func (h *Hub) connect(ctx context.Context, service, code, public, password, name string, relayOnly, reconnectOnly bool, cached *Saved) (Saved, error) {
 	ctx, cancelAttempt := context.WithCancel(ctx)
 	defer cancelAttempt()
 	service, e := device.ServiceURL(service)
@@ -325,7 +325,7 @@ func (h *Hub) connect(ctx context.Context, service, code, public, password, name
 	if s.Key == "" || (s.Expires > 0 && s.Expires <= time.Now().Unix()) {
 		connectivity.Report(ctx, "request", "正在向被控电脑请求授权", connectivity.StageTimeout)
 		reqID := device.Random()[:32]
-		envelope, e := device.Seal(i.Private, d.Public, "reignhub/pair/request/"+reqID, map[string]any{"password": password, "remember": remember, "info": i.Info})
+		envelope, e := device.Seal(i.Private, d.Public, "reignhub/pair/request/"+reqID, map[string]any{"password": password, "info": i.Info})
 		if e != nil {
 			return s, e
 		}

@@ -106,7 +106,7 @@ func TestDevicePairingControlAndRevocation(t *testing.T) {
 	go func() {
 		var err error
 		controller := device.ClientInfo{Name: "iQOO Z9 Turbo", Platform: "android", Kind: "native", Model: "V2352A"}
-		saved, err = hub.Connect(device.WithClientInfo(ctx, controller), server.URL, code, info["public"].(string), "", "test controller", true, true)
+		saved, err = hub.Connect(device.WithClientInfo(ctx, controller), server.URL, code, info["public"].(string), "", "test controller", true)
 		result <- err
 	}()
 	var pending []map[string]any
@@ -146,7 +146,7 @@ func TestDevicePairingControlAndRevocation(t *testing.T) {
 	// Same command after reconnect must not cause a second side effect.
 	hub.Disconnect(saved.ID)
 	updated := device.ClientInfo{Name: "Levi 的 MacBook Pro", Platform: "darwin", Kind: "native"}
-	if _, e = hub.Connect(device.WithClientInfo(ctx, updated), server.URL, code, "", "", "test controller", true, true); e != nil {
+	if _, e = hub.Connect(device.WithClientInfo(ctx, updated), server.URL, code, "", "", "test controller", true); e != nil {
 		t.Fatal(e)
 	}
 	if _, e = hub.Call(ctx, saved.ID, command); e != nil {
@@ -189,7 +189,7 @@ func TestDevicePairingControlAndRevocation(t *testing.T) {
 		t.Fatal("offline write should fail")
 	}
 	// Keep the first controller connected while a second device pairs and is revoked.
-	if _, e = hub.Connect(ctx, server.URL, code, "", "", "test controller", true, true); e != nil {
+	if _, e = hub.Connect(ctx, server.URL, code, "", "", "test controller", true); e != nil {
 		t.Fatal(e)
 	}
 	// A second independent controller can pair by password without host confirmation.
@@ -199,10 +199,10 @@ func TestDevicePairingControlAndRevocation(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer second.DB.Close()
-	if _, e = second.Connect(ctx, server.URL, code, "", "wrong-password", "second", true, true); e == nil {
+	if _, e = second.Connect(ctx, server.URL, code, "", "wrong-password", "second", true); e == nil {
 		t.Fatal("wrong password allowed")
 	}
-	s2, e := second.Connect(ctx, server.URL, code, "", "demo-password-123", "second", true, true)
+	s2, e := second.Connect(ctx, server.URL, code, "", "demo-password-123", "second", true)
 	if e != nil {
 		t.Fatal(e)
 	}

@@ -50,6 +50,7 @@ export interface Limits {
   maxAgentsPerDevice: number | null;
   maxConcurrentConnections: number | null;
   allowRelay: boolean;
+  relayNodes?: number;
 }
 export const unlimited: Limits = {
   maxHostDevices: null,

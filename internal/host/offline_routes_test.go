@@ -112,7 +112,7 @@ func TestPairedRestartWithoutControl(t *testing.T) {
 				return h
 			}
 			h := openHub()
-			saved, err := h.Connect(ctx, server.URL, info["connectionId"].(string), info["public"].(string), "fixture-password", "isolated controller", true, tc.relay)
+			saved, err := h.Connect(ctx, server.URL, info["connectionId"].(string), info["public"].(string), "fixture-password", "isolated controller", tc.relay)
 			if err != nil {
 				t.Fatal(err)
 			}

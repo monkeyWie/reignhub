@@ -55,7 +55,7 @@ func TestDeployedWorkerNativeRelay(t *testing.T) {
 	}
 	defer hub.Close()
 	trace := connectivity.WithProgress(ctx, func(p connectivity.Progress) { t.Log(p.Stage, p.Message, p.Detail) })
-	saved, err := hub.Connect(trace, origin, info["connectionId"].(string), info["public"].(string), "isolated-fixture-password", "Isolated relay test controller", true, true)
+	saved, err := hub.Connect(trace, origin, info["connectionId"].(string), info["public"].(string), "isolated-fixture-password", "Isolated relay test controller", true)
 	if err != nil {
 		t.Fatal(err)
 	}

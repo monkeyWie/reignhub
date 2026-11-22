@@ -49,6 +49,8 @@ export function AccountPage({
   const [providers, setProviders] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [email, setEmail] = useState("");
+  const [otp, setOtp] = useState("");
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [handoff, setHandoff] = useState(false);
@@ -81,6 +83,24 @@ export function AccountPage({
       setHandoff(true);
     }
   }, []);
+  async function emailLogin(verify: boolean) {
+    setBusy(true);
+    try {
+      await api("/api/account/email/" + (verify ? "verify" : "send"), {
+        email,
+        otp,
+      });
+      if (verify) {
+        setOtp("");
+        setError("");
+        await refresh();
+      } else setError("验证码已发送，请查看邮箱。");
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
   async function login(provider: string) {
     try {
       setBusy(true);
@@ -138,7 +158,8 @@ export function AccountPage({
           <section className="account-section">
             <h2>设备同步</h2>
             <p className="muted">
-              在原生客户端点击「登录与绑定账号」，将显示的授权码填在这里。同账号的控制端可直接访问已关联的被控端。
+              原生 App
+              可直接使用邮箱验证码登录。浏览器控制端显示授权码时，可在此确认关联。
             </p>
             <input
               className="field"
@@ -255,12 +276,58 @@ export function AccountPage({
               <a href={legal.privacy}>隐私政策</a>。
             </p>
           )}
+          {providers.includes("email") && (
+            <form
+              className="account-section"
+              onSubmit={(ev) => {
+                ev.preventDefault();
+                void emailLogin(true);
+              }}
+            >
+              <label>
+                邮箱
+                <input
+                  className="field"
+                  type="email"
+                  autoComplete="email"
+                  required
+                  value={email}
+                  onChange={(ev) => setEmail(ev.target.value)}
+                />
+              </label>
+              <button
+                type="button"
+                className="button ghost"
+                disabled={busy || !email.trim()}
+                onClick={() => void emailLogin(false)}
+              >
+                发送验证码
+              </button>
+              <label>
+                六位验证码
+                <input
+                  className="field"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  pattern="[0-9]{6}"
+                  required
+                  value={otp}
+                  onChange={(ev) => setOtp(ev.target.value)}
+                />
+              </label>
+              <button type="submit" className="button" disabled={busy}>
+                邮箱登录
+              </button>
+            </form>
+          )}
           <div className="login-actions">
-            {providers.map((p) => (
-              <Button key={p} disabled={busy} onClick={() => login(p)}>
-                {p === "github" ? "GitHub" : "Google"} 登录
-              </Button>
-            ))}
+            {providers
+              .filter((p) => p !== "email")
+              .map((p) => (
+                <Button key={p} disabled={busy} onClick={() => login(p)}>
+                  {p === "github" ? "GitHub" : "Google"} 登录
+                </Button>
+              ))}
           </div>
         </>
       )}
@@ -340,8 +407,6 @@ export function AccountPage({
 export function AdminPage() {
   const [data, setData] = useState("");
   const [error, setError] = useState("");
-  const [user, setUser] = useState("");
-  const [override, setOverride] = useState("");
   useEffect(() => {
     void api<{ plans: unknown }>("/api/admin/plans")
       .then((r) => setData(JSON.stringify(r.plans, null, 2)))
@@ -356,58 +421,9 @@ export function AdminPage() {
         <a href="/account">返回账号</a>
       </nav>
       <h1>权益管理</h1>
-      <p className="muted">
-        修改会在下一次授权续期生效。已有本地 Agent 任务不会被终止。
-      </p>
       <section className="account-section">
-        <h2>套餐配置</h2>
-        <textarea
-          className="field admin-editor"
-          value={data}
-          onChange={(e) => setData(e.target.value)}
-        />
-        <Button
-          onClick={async () => {
-            try {
-              await api("/api/admin/plans", { plans: JSON.parse(data) });
-              setError("已保存");
-            } catch (e) {
-              setError(String(e));
-            }
-          }}
-        >
-          保存套餐
-        </Button>
-      </section>
-      <section className="account-section">
-        <h2>账号覆盖</h2>
-        <input
-          className="field"
-          placeholder="Better Auth 用户 ID"
-          value={user}
-          onChange={(e) => setUser(e.target.value)}
-        />
-        <textarea
-          className="field"
-          placeholder='{"maxHostDevices":5,"maxAgentsPerDevice":null,"maxConcurrentConnections":null,"allowRelay":true}'
-          value={override}
-          onChange={(e) => setOverride(e.target.value)}
-        />
-        <Button
-          onClick={async () => {
-            try {
-              await api("/api/admin/override", {
-                user,
-                limits: override ? JSON.parse(override) : null,
-              });
-              setError("已保存");
-            } catch (e) {
-              setError(String(e));
-            }
-          }}
-        >
-          保存覆盖
-        </Button>
+        <h2>当前套餐</h2>
+        <pre>{data}</pre>
       </section>
       {error && <p className="account-message">{error}</p>}
     </main>

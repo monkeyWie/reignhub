@@ -55,7 +55,6 @@ type saved struct {
 type Intent struct {
 	Info     device.ClientInfo `json:"info,omitempty"`
 	Password string            `json:"password"`
-	Remember bool              `json:"remember"`
 }
 type Manager struct {
 	accountRevision uint64
@@ -460,12 +459,9 @@ func (m *Manager) respond(ctx context.Context, id string, allow bool) error {
 			info.Name = p.Name
 		}
 		g := Grant{Pairing: p.ID, Client: p.Client, Name: info.Name, Info: info, Public: p.Public, Key: device.Random()}
-		if !intent.Remember {
-			g.Expires = time.Now().Add(8 * time.Hour).Unix()
-		}
 		var e error
 		direct := m.directAddresses(i)
-		reply, e = device.Seal(i.Private, p.Public, "reignhub/pair/reply/"+p.ID, map[string]any{"key": g.Key, "host": i.ID, "public": i.Public, "expires": g.Expires, "direct": direct})
+		reply, e = device.Seal(i.Private, p.Public, "reignhub/pair/reply/"+p.ID, map[string]any{"key": g.Key, "host": i.ID, "public": i.Public, "direct": direct})
 		if e != nil {
 			return e
 		}
@@ -496,11 +492,10 @@ func (m *Manager) respond(ctx context.Context, id string, allow bool) error {
 }
 func (m *Manager) Local(ctx context.Context, r control.Request) (any, error) {
 	var in struct {
-		ServiceURL, Name, Password, ID, Client, Provider string
-		Allow                                            bool
-		Remember                                         bool
-		ClearPassword                                    bool
-		Enabled                                          *bool
+		ServiceURL, Name, Password, ID, Client, Provider, Email, OTP string
+		Allow                                                        bool
+		ClearPassword                                                bool
+		Enabled                                                      *bool
 	}
 	if len(r.Params) > 0 {
 		if e := json.Unmarshal(r.Params, &in); e != nil {
@@ -554,13 +549,13 @@ func (m *Manager) Local(ctx context.Context, r control.Request) (any, error) {
 		}
 		m.cfg.Agents[edit.ID] = edit.Agent
 		return map[string]bool{"restartRequired": true}, m.cfg.Save()
-	case "host.account.start", "host.account.poll", "host.account.status", "host.account.devices":
+	case "host.account.send", "host.account.verify", "host.account.status", "host.account.devices":
 		m.mu.Lock()
 		i := m.state.Identity
 		m.mu.Unlock()
-		paths := map[string]string{"host.account.start": "/api/account/device-login/start", "host.account.poll": "/api/account/device-login/poll", "host.account.status": "/api/account/device-status", "host.account.devices": "/api/account/device-list"}
-		payload := map[string]any{"id": in.ID}
-		if r.Method == "host.account.start" {
+		paths := map[string]string{"host.account.send": "/api/account/device-email/send", "host.account.verify": "/api/account/device-email/verify", "host.account.status": "/api/account/device-status", "host.account.devices": "/api/account/device-list"}
+		payload := map[string]any{"email": in.Email, "otp": in.OTP}
+		if r.Method == "host.account.verify" {
 			var companion struct{ ControllerToken, ServiceURL string }
 			if len(r.Params) > 0 {
 				if err := json.Unmarshal(r.Params, &companion); err != nil {
@@ -587,7 +582,7 @@ func (m *Manager) Local(ctx context.Context, r control.Request) (any, error) {
 			if info.Name == "" {
 				info.Name = p.Name
 			}
-			pending = append(pending, map[string]any{"id": p.ID, "name": info.Name, "platform": info.Platform, "kind": info.Kind, "model": info.Model, "fingerprint": device.Fingerprint(p.Public), "expires": p.Expires, "remember": m.intents[p.ID].Remember})
+			pending = append(pending, map[string]any{"id": p.ID, "name": info.Name, "platform": info.Platform, "kind": info.Kind, "model": info.Model, "fingerprint": device.Fingerprint(p.Public), "expires": p.Expires})
 		}
 		grants := []map[string]any{}
 		for _, g := range m.state.Grants {

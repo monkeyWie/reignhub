@@ -345,6 +345,7 @@ export async function handleCore(
                   device.id,
                   role,
                   signed.ticket,
+                  decision.limits.relayNodes,
                 )
               : [];
             result = json({

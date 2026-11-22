@@ -62,19 +62,35 @@ func TestAccountWorkerDirectAndRemoval(t *testing.T) {
 	defer func() { cancel(); <-done }()
 	eventually(t, func() bool { return m.Network().State == "connected" })
 	info := invoke(t, m, "host.info", nil).(map[string]any)
-	hl := invoke(t, m, "host.account.start", nil).(map[string]any)
-	api("/api/account/device-login/approve", map[string]any{"code": hl["code"]})
 	hub, err := clienthub.New(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer hub.Close()
-	cl, err := hub.Account(ctx, origin, "Account fixture", "start", "")
+	// The isolated loopback Worker delivers verification mail to a fixture inbox.
+	email := "fixture@example.invalid"
+	invoke(t, m, "host.account.send", map[string]string{"email": email})
+	req, err := http.NewRequestWithContext(ctx, "GET", origin+"/fixture/mailbox", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	api("/api/account/device-login/approve", map[string]any{"code": cl.(map[string]any)["code"]})
-	saved, err := hub.Connect(ctx, origin, info["connectionId"].(string), info["public"].(string), "", "Account fixture", true, false)
+	req.Header.Set("Cookie", cookie)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mail struct{ OTP string }
+	err = json.NewDecoder(resp.Body).Decode(&mail)
+	resp.Body.Close()
+	if err != nil || resp.StatusCode != 200 || len(mail.OTP) != 6 {
+		t.Fatal("local fixture mailbox unavailable")
+	}
+	token, err := hub.ControllerCredential(ctx, origin, "Account fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	invoke(t, m, "host.account.verify", map[string]string{"email": email, "otp": mail.OTP, "serviceUrl": origin, "controllerToken": token})
+	saved, err := hub.Connect(ctx, origin, info["connectionId"].(string), info["public"].(string), "", "Account fixture", false)
 	if err != nil {
 		t.Fatal(err)
 	}

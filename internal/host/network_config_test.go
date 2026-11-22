@@ -80,7 +80,7 @@ func TestHostRetriesMissingTrustConfigBeforeGoingOnline(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer hub.Close()
-	saved, err := hub.Connect(ctx, server.URL, info["connectionId"].(string), info["public"].(string), "fixture-password", "config recovery controller", true, true)
+	saved, err := hub.Connect(ctx, server.URL, info["connectionId"].(string), info["public"].(string), "fixture-password", "config recovery controller", true)
 	if err != nil {
 		t.Fatalf("signed device verification failed after config recovery: %v", err)
 	}

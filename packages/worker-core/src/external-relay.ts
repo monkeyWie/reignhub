@@ -85,11 +85,12 @@ export async function enrollNodes(
   device: string,
   role: string,
   grant: string,
+  maxNodes = 3,
 ) {
   const nodes = externalRelays(env);
   if (!nodes.length) return [];
   const offset = parseInt(host.slice(0, 8), 16) % nodes.length;
-  const count = issuer ? Math.min(3, nodes.length) : 1;
+  const count = issuer ? Math.min(maxNodes, 3, nodes.length) : 1;
   return Promise.all(
     Array.from({ length: count }, async (_, idx) => {
       const node = nodes[(offset + idx) % nodes.length];

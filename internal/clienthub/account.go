@@ -7,8 +7,8 @@ import (
 )
 
 // Account calls use a device credential, never an OAuth cookie or a refresh
-// token copied into the native application. Browser approval binds this device.
-func (h *Hub) Account(ctx context.Context, service, name, action, id string) (any, error) {
+// token copied into the native application. The verified email login binds the authenticated device.
+func (h *Hub) Account(ctx context.Context, service, name, action, email, otp string) (any, error) {
 	origin, err := device.ServiceURL(service)
 	if err != nil {
 		return nil, err
@@ -17,13 +17,13 @@ func (h *Hub) Account(ctx context.Context, service, name, action, id string) (an
 	if err != nil {
 		return nil, err
 	}
-	paths := map[string]string{"start": "/api/account/device-login/start", "poll": "/api/account/device-login/poll", "status": "/api/account/device-status", "devices": "/api/account/device-list"}
+	paths := map[string]string{"send": "/api/account/device-email/send", "verify": "/api/account/device-email/verify", "status": "/api/account/device-status", "devices": "/api/account/device-list"}
 	path, ok := paths[action]
 	if !ok {
 		return nil, fmt.Errorf("无效账号操作")
 	}
 	var out map[string]any
-	err = device.Post(ctx, origin, identity.Token, path, map[string]any{"id": id}, &out)
+	err = device.Post(ctx, origin, identity.Token, path, map[string]any{"email": email, "otp": otp}, &out)
 	return out, err
 }
 

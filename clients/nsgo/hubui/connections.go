@@ -261,7 +261,7 @@ func (s *State) connectDevice(id string, automatic, pair bool) {
 	params := Object{}
 	for _, device := range s.devices {
 		if str(device, "id") == id {
-			params = Object{"code": str(device, "connectionId"), "service": str(device, "service"), "public": device["public"], "name": s.clientName, "remember": true, "relayOnly": device["relayOnly"]}
+			params = Object{"code": str(device, "connectionId"), "service": str(device, "service"), "public": device["public"], "name": s.clientName, "relayOnly": device["relayOnly"]}
 		}
 	}
 	a := &connectAttempt{params: params, target: id, savedPairing: pair, cancel: cancel, active: true, started: time.Now(), stepStarted: time.Now()}

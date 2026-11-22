@@ -246,7 +246,7 @@ func (a *API) connect(ctx context.Context, p Object) (any, error) {
 	if str(s, "key") == "" || expired {
 		connectivity.Report(ctx, "authorize", "等待被控设备授权", connectivity.StageTimeout)
 		request := randomHex(16)
-		envelope, e := seal(i, str(d, "public"), "reignhub/pair/request/"+request, Object{"password": p["password"], "remember": p["remember"] != false, "info": i["info"]})
+		envelope, e := seal(i, str(d, "public"), "reignhub/pair/request/"+request, Object{"password": p["password"], "info": i["info"]})
 		if e != nil {
 			return nil, e
 		}
