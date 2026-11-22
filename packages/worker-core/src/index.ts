@@ -1,4 +1,4 @@
-export { externalRelays } from "./external-relay";
+export { assignedRelays, externalRelays } from "./external-relay";
 export { handleConsole } from "./console";
 import { stunServers } from "./stun-servers";
 import { drizzle } from "drizzle-orm/d1";

@@ -77,6 +77,17 @@ export function externalRelays(env: CoreEnv) {
   });
 }
 
+// Both discovery and the managed forwarding callback use this host-specific set.
+export function assignedRelays(env: CoreEnv, host: string, maxNodes: number) {
+  const nodes = externalRelays(env);
+  if (!nodes.length) return [];
+  const offset = parseInt(host.slice(0, 8), 16) % nodes.length;
+  return Array.from(
+    { length: Math.min(maxNodes, 3, nodes.length) },
+    (_, index) => nodes[(offset + index) % nodes.length],
+  );
+}
+
 export async function enrollNodes(
   env: CoreEnv,
   namespace: string,
@@ -87,13 +98,9 @@ export async function enrollNodes(
   grant: string,
   maxNodes = 3,
 ) {
-  const nodes = externalRelays(env);
-  if (!nodes.length) return [];
-  const offset = parseInt(host.slice(0, 8), 16) % nodes.length;
-  const count = issuer ? Math.min(maxNodes, 3, nodes.length) : 1;
+  const nodes = assignedRelays(env, host, issuer ? maxNodes : 1);
   return Promise.all(
-    Array.from({ length: count }, async (_, idx) => {
-      const node = nodes[(offset + idx) % nodes.length];
+    nodes.map(async (node) => {
       const key = await crypto.subtle.importKey(
         "raw",
         un64(node.secret),
