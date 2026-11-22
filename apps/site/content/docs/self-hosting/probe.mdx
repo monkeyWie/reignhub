@@ -1,11 +1,11 @@
 ---
-title: Add a STUN and native relay node
-description: Offer discovery and optional QUIC and TCP relay on a public IP.
+title: Add a STUN and relay node
+description: Offer discovery and optional WSS, QUIC and TCP relay on a public IP.
 ---
 
 ## When you need it
 
-Workers cannot listen on raw UDP/TCP probe sockets. Public UDP STUN works by default. To add your own mapping discovery or cover unreachable public probes, use `{"services":{"stun":{}}}` as the public server’s `config.json`.
+Workers cannot listen on raw UDP/TCP probe sockets. Public UDP STUN works by default. To add your own mapping discovery or cover unreachable public probes, use `{"services":{"control":{"enable":false},"relay":{"enable":false}}}` as the public server’s `config.json`.
 
 The probe returns address mappings only. It does not store a device directory, run agents, serve Web pages or relay application traffic. You can deploy the Worker without it.
 
@@ -15,7 +15,7 @@ Use the Go version in `go.mod`, or the server archive for your platform:
 
 ```sh
 go build -o reignhub-server ./cmd/reignhub-server
-# Set config.json to {"services":{"stun":{}}} before starting.
+# Set config.json to {"services":{"control":{"enable":false},"relay":{"enable":false}}} before starting.
 ./reignhub-server
 ```
 
@@ -40,13 +40,13 @@ Clients still configure only the Worker HTTPS URL. `/p2p/config` publishes these
 
 Put public and self-hosted nodes in the same list. The control service always advertises Cloudflare, Google and Bilibili (`stun.chat.bilibili.com:3478`) for UDP discovery. Omit the list or use `[]` to add no other nodes. A Go control service uses `services.control.stunServers` with the same values and also publishes its local STUN listeners. Browsers have no raw TCP API; TCP probing is primarily for native clients.
 
-## Add native relay on the same machine
+## Add relay on the same machine
 
 Enable STUN and relay in the node’s `config.json`. Start the node, then run the second command from the same directory in another shell to read its private registration credential.
 
 ```json
 {
-  "services": { "stun": {}, "relay": {} }
+  "services": { "control": { "enable": false } }
 }
 ```
 
@@ -55,11 +55,13 @@ Enable STUN and relay in the node’s `config.json`. Start the node, then run th
 ./reignhub-server --print-relay-credential
 ```
 
-Allow inbound UDP and TCP on port 26332. Keep the node database on a persistent volume so its credential survives restarts and upgrades. In the Worker dashboard, create a **Secret** named `EXTERNAL_RELAYS` and paste the array below with your address and credential. With Wrangler, run `pnpm exec wrangler secret put EXTERNAL_RELAYS` and paste it at the prompt. For Go control, set `services.control.externalRelays` to the same array and restrict access to the configuration file. Clients receive the public TLS pin and a short-lived access ticket.
+Allow inbound UDP and TCP on port 26332. Keep the node database on a persistent volume so its credential survives restarts and upgrades. In the Worker dashboard, create a **Secret** named `EXTERNAL_RELAYS` and paste the array below with your address and credential. With Wrangler, run `pnpm exec wrangler secret put EXTERNAL_RELAYS` and paste it at the prompt. For Go control, set `services.control.externalRelays` to the same array and restrict access to the configuration file. Paired native devices receive the public TLS pin and their own node credentials. They can reconnect through this node while the control service is offline. To block a device at the node, add its device ID to `services.relay.revokedDevices` in config.json. The running node rereads this list every two seconds and closes matching connections.
 
 ```json
-[{ "addresses": ["203.0.113.10:26332"], "credential": "REPLACE_WITH_NODE_CREDENTIAL" }]
+[{ "addresses": ["203.0.113.10:26332","wss://relay.example.com"], "credential": "REPLACE_WITH_NODE_CREDENTIAL" }]
 ```
+
+Browsers use the `wss://` origin in the array. Terminate HTTPS with Caddy or Nginx and forward WebSocket upgrades to the Go listener on port 26330/TCP. Control appends `/p2p/node`. The node uses one credential for WSS, UDP and TCP. For a WSS-only relay, list only the WSS origin and set `services.relay.native.enable` to `false`. Paired controllers can reconnect while control is offline when both endpoints can reach the node.
 
 For multiple nodes, add one entry per relay. A shared address advertises both protocols. Use `["udp:probe.example.com:3478","tcp:probe.example.com:3479"]` for separate endpoints. This syntax applies to both STUN and each relay’s `addresses` array on Go and Worker. Redeploy the Worker or restart the Go control after editing its configuration.
 

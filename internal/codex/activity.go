@@ -43,11 +43,11 @@ func toolActivities(raw json.RawMessage) []provider.Activity {
 			case "search":
 				out = append(out, provider.Activity{Kind: "search", Title: strings.TrimSpace("搜索 " + a.Query), Detail: strings.TrimSpace(a.Path + "\n" + command)})
 			default:
-				out = append(out, provider.Activity{Kind: "command", Title: strings.TrimSpace("运行 " + command), Detail: command})
+				out = append(out, provider.Activity{Kind: "command", Title: "运行命令", Detail: command})
 			}
 		}
 		if len(out) == 0 {
-			return activity("command", strings.TrimSpace("运行 "+i.Command), i.Command)
+			return activity("command", "运行命令", i.Command)
 		}
 		return out
 	case "fileChange":

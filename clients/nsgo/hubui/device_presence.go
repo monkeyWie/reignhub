@@ -56,6 +56,9 @@ func (s *State) deviceOnline(d Object) (online, known bool) {
 		return true, true
 	}
 	online, known = s.presenceFor(d)["online"].(bool)
+	if !online && flag(d, "independentRoutes") {
+		return false, false
+	}
 	return
 }
 

@@ -48,8 +48,9 @@ type Pair struct {
 	Expires  int64  `json:"expires" gorm:"index"`
 }
 type DeviceGrant struct {
-	Host   string `gorm:"primaryKey;size:64"`
-	Client string `gorm:"primaryKey;size:64"`
+	Pairing string
+	Host    string `gorm:"primaryKey;size:64"`
+	Client  string `gorm:"primaryKey;size:64"`
 }
 type Metadata struct {
 	Key   string `gorm:"primaryKey;size:64"`
@@ -74,6 +75,7 @@ type Server struct {
 	rates          map[string]bucket
 	nextCleanup    int64
 	relay          *relay.Server
+	signer         ed25519.PrivateKey
 	nativeKey      ed25519.PrivateKey
 	ServiceID      string
 	Network        connectivity.Policy
@@ -127,6 +129,7 @@ func NewWithDB(db *gorm.DB, origins []string) (*Server, error) {
 	}
 	s.nativeKey = relayTLSKey(seed)
 	private := ed25519.NewKeyFromSeed(seed)
+	s.signer = private
 	public := private.Public().(ed25519.PublicKey)
 	s.Network.ServiceID = s.ServiceID
 	s.Network.GrantPublicKey = base64.RawURLEncoding.EncodeToString(public)
@@ -160,6 +163,13 @@ func (s *Server) ConfigureNative(nodes []relay.RelayNode, websocket bool) {
 	s.relay.DisableWebSocket = !websocket
 	s.relay.ExternalRelays = nodes
 }
+func (s *Server) SetRevokedRelayDevices(ids []string) {
+	s.relay.SetRevokedDevices(ids)
+}
+func (s *Server) ServeNode(w http.ResponseWriter, r *http.Request) {
+	s.relay.ServeNode(w, r, s.nativeKey)
+}
+
 func (s *Server) ListenNative(address, public string) (*relay.NativeListener, error) {
 	return s.relay.ListenNative(address, public, s.nativeKey)
 }
@@ -252,10 +262,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		Name, Public, ConnectionID, Host, ID, Envelope, Reply, Client string
-		Hosts                                                         []string
-		IsHost                                                        bool
-		Allow                                                         bool
+		Name, Public, ConnectionID, Host, ID, Envelope, Reply, Client, Pairing string
+		Hosts                                                                  []string
+		IsHost                                                                 bool
+		Allow                                                                  bool
 	}
 	if e := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&in); e != nil {
 		apiError(w, "invalid request", 400)
@@ -345,6 +355,22 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	switch r.URL.Path {
+	case "/p2p/routes":
+		if (r.Header.Get("Origin") != "" && id == in.Host) || !validID(in.Host) || !s.CanAccess(id, in.Host) {
+			apiError(w, "permission denied", 403)
+			return
+		}
+		role := "client"
+		if id == in.Host {
+			role = "host"
+		}
+		ticket, err := access.Sign(s.signer, access.Grant{Audience: access.Audience, Namespace: s.ServiceID, HostID: in.Host, DeviceID: id, Role: role, Scopes: []string{"connect", "offline"}, IssuedAt: now, ID: relay.ID()})
+		if err != nil {
+			apiError(w, "signing unavailable", 503)
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		write(relay.Routes{Grant: ticket, Node: s.relay.Enroll(s.ServiceID, in.Host, id, role, r.Host, s.nativeKey)})
 	case "/p2p/devices/presence":
 		name := me.Name
 		if in.Name != "" && len(in.Name) <= 100 {
@@ -471,7 +497,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return err
 			}
 			if p.State == "approved" {
-				return tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&DeviceGrant{Host: p.Host, Client: p.Client}).Error
+				return tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "host"}, {Name: "client"}}, DoUpdates: clause.AssignmentColumns([]string{"pairing"})}).Create(&DeviceGrant{Host: p.Host, Client: p.Client, Pairing: p.ID}).Error
 			}
 			return nil
 		}); err != nil {
@@ -480,11 +506,18 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		write(p)
 	case "/p2p/pairings/revoke":
-		if e := s.DB.Delete(&DeviceGrant{}, "host = ? AND client = ?", id, in.Client).Error; e != nil {
+		q := s.DB.Where("host = ? AND client = ?", id, in.Client)
+		if in.Pairing != "" {
+			q = q.Where("pairing = ?", in.Pairing)
+		}
+		revoked := q.Delete(&DeviceGrant{})
+		if revoked.Error != nil {
 			apiError(w, "persistence failed", 500)
 			return
 		}
-		s.relay.DisconnectDevice(id, in.Client)
+		if revoked.RowsAffected > 0 {
+			s.relay.DisconnectDevice(id, in.Client)
+		}
 		write(map[string]bool{"ok": true})
 	default:
 		http.NotFound(w, r)

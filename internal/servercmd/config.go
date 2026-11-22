@@ -3,6 +3,7 @@ package servercmd
 import (
 	"bytes"
 	"cmp"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -10,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/monkeyWie/reignhub/internal/connectivity"
 	"github.com/monkeyWie/reignhub/internal/relay"
@@ -121,7 +123,7 @@ func loadConfig(path string) (Config, error) {
 			return c, fmt.Errorf("config %q: null is unsupported", path)
 		}
 	}
-	var file configFile
+	file := configFile{Services: allServices()}
 	d := json.NewDecoder(bytes.NewReader(data))
 	d.DisallowUnknownFields()
 	if err := d.Decode(&file); err != nil {
@@ -129,9 +131,6 @@ func loadConfig(path string) (Config, error) {
 	}
 	if d.Decode(new(any)) != io.EOF {
 		return c, fmt.Errorf("config %q must contain one JSON object", path)
-	}
-	if file.Services == nil {
-		file.Services = allServices()
 	}
 	c, err = file.Services.resolve()
 	if err != nil {
@@ -150,16 +149,17 @@ func loadConfig(path string) (Config, error) {
 }
 
 type configFile struct {
-	Services *servicesConfig `json:"services"`
+	Services servicesConfig `json:"services"`
 }
 
 type servicesConfig struct {
-	Control *controlConfig `json:"control,omitempty"`
-	STUN    *stunConfig    `json:"stun,omitempty"`
-	Relay   *relayConfig   `json:"relay,omitempty"`
+	Control controlConfig `json:"control,omitempty"`
+	STUN    stunConfig    `json:"stun,omitempty"`
+	Relay   relayConfig   `json:"relay,omitempty"`
 }
 
 type controlConfig struct {
+	Enable         bool                            `json:"enable"`
 	Listen         string                          `json:"listen,omitempty"`
 	Database       string                          `json:"database,omitempty"`
 	WebDir         string                          `json:"webDir,omitempty"`
@@ -177,24 +177,43 @@ type listenerConfig struct {
 	PublicAddress string `json:"publicAddress,omitempty"`
 }
 
-type stunConfig struct {
+type transportConfig struct {
 	listenerConfig
-	UDP *listenerConfig `json:"udp,omitempty"`
-	TCP *listenerConfig `json:"tcp,omitempty"`
+	Enable *bool `json:"enable,omitempty"`
+}
+
+func (t *transportConfig) addresses(listen, public string) (string, string) {
+	if t == nil {
+		return listen, public
+	}
+	if t.Enable != nil && !*t.Enable {
+		return "", ""
+	}
+	return cmp.Or(t.Listen, listen), cmp.Or(t.PublicAddress, public)
+}
+
+type stunConfig struct {
+	Enable bool `json:"enable"`
+	listenerConfig
+	UDP *transportConfig `json:"udp,omitempty"`
+	TCP *transportConfig `json:"tcp,omitempty"`
 }
 
 type relayConfig struct {
-	WebSocket *bool           `json:"websocket,omitempty"`
-	Native    *listenerConfig `json:"native,omitempty"`
-	Database  string          `json:"database,omitempty"`
+	RevokedDevices []string         `json:"revokedDevices,omitempty"`
+	Enable         bool             `json:"enable"`
+	WebSocket      *bool            `json:"websocket,omitempty"`
+	Native         *transportConfig `json:"native,omitempty"`
+	Database       string           `json:"database,omitempty"`
 }
 
-func allServices() *servicesConfig {
-	return &servicesConfig{Control: &controlConfig{}, STUN: &stunConfig{}, Relay: &relayConfig{}}
+func allServices() servicesConfig {
+	return servicesConfig{Control: controlConfig{Enable: true}, STUN: stunConfig{Enable: true}, Relay: relayConfig{Enable: true}}
 }
 
 // Config contains the resolved startup settings. An empty listener address disables that listener.
 type Config struct {
+	RevokedDevices                                       []string
 	Control, WebSocket                                   bool
 	Listen, State, Web, TLSCert, TLSKey                  string
 	Origins                                              []string
@@ -206,11 +225,8 @@ type Config struct {
 
 func (s servicesConfig) resolve() (Config, error) {
 	c := Config{State: "data/reignhub.db"}
-	if s.Control == nil && s.STUN == nil && s.Relay == nil {
-		return c, errors.New("services must include control, stun or relay")
-	}
-	if ctrl := s.Control; ctrl != nil {
-		c.Control = true
+	if ctrl := s.Control; ctrl.Enable || s.Relay.Enable && (s.Relay.WebSocket == nil || *s.Relay.WebSocket) {
+		c.Control = ctrl.Enable
 		c.Listen = cmp.Or(ctrl.Listen, ":26330")
 		c.State, c.Web = cmp.Or(ctrl.Database, c.State), ctrl.WebDir
 		c.Origins = ctrl.AllowedOrigins
@@ -235,40 +251,32 @@ func (s servicesConfig) resolve() (Config, error) {
 			return c, fmt.Errorf("control.externalRelays: %w", err)
 		}
 	}
-	if st := s.STUN; st != nil {
+	if st := s.STUN; st.Enable {
 		shared := cmp.Or(st.Listen, ":"+connectivity.DefaultSTUNPort)
-		udp, tcp := st.UDP, st.TCP
-		if udp == nil && tcp == nil {
-			udp, tcp = &listenerConfig{}, &listenerConfig{}
-		}
-		if udp != nil {
-			c.STUNListen, c.STUNPublic = cmp.Or(udp.Listen, shared), cmp.Or(udp.PublicAddress, st.PublicAddress)
-		}
-		if tcp != nil {
-			c.TCPSTUNListen, c.TCPSTUNPublic = cmp.Or(tcp.Listen, shared), cmp.Or(tcp.PublicAddress, st.PublicAddress)
-		}
+		c.STUNListen, c.STUNPublic = st.UDP.addresses(shared, st.PublicAddress)
+		c.TCPSTUNListen, c.TCPSTUNPublic = st.TCP.addresses(shared, st.PublicAddress)
 	}
-	if r := s.Relay; r != nil {
+	if r := s.Relay; r.Enable {
+		for _, id := range r.RevokedDevices {
+			if _, err := hex.DecodeString(id); len(id) != 32 || id != strings.ToLower(id) || err != nil {
+				return c, errors.New("relay.revokedDevices requires lowercase 32-character hex device IDs")
+			}
+		}
+		c.RevokedDevices = r.RevokedDevices
 		if c.Control && r.Database != "" {
 			return c, errors.New("local relay uses control.database")
 		}
 		if !c.Control {
 			c.State = cmp.Or(r.Database, c.State)
 		}
-		c.WebSocket = c.Control && r.Native == nil
+		c.WebSocket = true
 		if r.WebSocket != nil {
 			c.WebSocket = *r.WebSocket
-			if c.WebSocket && !c.Control {
-				return c, errors.New("relay.websocket requires the local control service")
-			}
 		}
-		if r.Native != nil || r.WebSocket == nil || !*r.WebSocket {
-			c.NativeListen = ":26332"
-			if r.Native != nil {
-				c.NativeListen = cmp.Or(r.Native.Listen, c.NativeListen)
-				c.NativePublic = r.Native.PublicAddress
-			}
-		}
+		c.NativeListen, c.NativePublic = r.Native.addresses(":26332", "")
+	}
+	if !c.Control && !c.WebSocket && c.STUNListen == "" && c.TCPSTUNListen == "" && c.NativeListen == "" {
+		return c, errors.New("enable at least one service listener")
 	}
 	for _, addr := range []string{c.STUNPublic, c.TCPSTUNPublic, c.NativePublic} {
 		if addr != "" {

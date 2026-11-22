@@ -345,17 +345,16 @@ jobs:
         run: |
           tail -80 "$RUNNER_TEMP/nsgo-chrome.log" /tmp/reignhub-browser-fixture.log 2>/dev/null || true
       - run: pnpm exec wrangler deploy --dry-run --outdir build/worker
-      - name: Package deployable Worker and NSGo assets
-        run: python3 scripts/platform/package-worker.py --version "$VERSION" --output dist/release
-      - uses: actions/upload-artifact@v7.0.2
+      - name: Share the verified Web console with the Go build
+        uses: actions/upload-artifact@v7.0.2
         with:
-          name: web-worker
-          path: dist/release/*
+          name: web-console
+          path: build/self-hosted-assets/assets/chat/
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 1
 
   server:
-    name: Build standalone Go servers and package manager definitions
+    name: Build standalone Go servers
     needs: [metadata, test, web]
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -375,14 +374,10 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - uses: actions/download-artifact@v8.0.2
         with:
-          name: web-worker
-          path: build/worker-release
-      - name: Reuse the verified Web build
-        run: |
-          mkdir -p build/worker-console
-          tar -xzf "build/worker-release/reignhub-web-worker-$VERSION.tar.gz" -C build/worker-console
-          python3 scripts/platform/package-server.py --version "$VERSION" --output dist/release \
-            --web-dir "build/worker-console/reignhub-web-worker-$VERSION/assets/assets/chat"
+          name: web-console
+          path: build/worker-console
+      - name: Package the six Go servers with the verified console
+        run: python3 scripts/platform/package-server.py --version "$VERSION" --output dist/release --web-dir build/worker-console
       - name: Smoke test embedded Web, SQLite and integrated TCP/UDP
         run: python3 scripts/ci/smoke-server.py --archive "dist/release/reignhub-server-$VERSION-linux-amd64.tar.gz"
       - name: Verify real encrypted Go host and TypeScript controller over relay
@@ -441,10 +436,6 @@ jobs:
           path: dist/release
       - uses: actions/download-artifact@v8.0.2
         with:
-          name: web-worker
-          path: dist/release
-      - uses: actions/download-artifact@v8.0.2
-        with:
           name: servers
           path: dist/release
       - name: Verify complete assets and checksums
@@ -482,6 +473,9 @@ jobs:
           - Upgrading from 0.x: the 1.0 clients start with fresh local storage. Save any unsent drafts and keep your current desktop data directory before upgrading. Plan to pair devices again.
           - Conversation history loads in pages as you scroll. Native and browser clients persist individual messages and keep a bounded window in memory.
           - Desktop sessions include terminal tabs. Hosts manage paired devices’ terminal access in Connection settings.
+          - Paired controllers try available routes in parallel. The first verified route serves requests, healthy P2P takes priority, and paths of the same kind compete on end-to-end latency. Update both the controller and the host for the new connection protocol.
+          - Browsers can reconnect through an enrolled Go WSS relay even when the control WebSocket is offline. Point a TLS reverse proxy at port 26330 and add its WSS origin to the relay node's addresses.
+          - Uploaded images retain their local original across message attachment ID changes. The gallery shows the thumbnail while loading and offers retry if the original is unavailable.
           - Native peers can negotiate QUIC or TCP paths. The open-source Go server and Cloudflare Worker include Cloudflare, Google and Bilibili UDP discovery and can advertise additional STUN and native relay nodes.
 
           - macOS DMG: open and drag ReignHub into Applications. Builds are ad hoc signed and not notarized.
@@ -489,9 +483,9 @@ jobs:
           - Linux: DEB, Arch Linux packages and AppImage for x64 and arm64; GTK 4 is required.
           - Android packages ending in `-debug.apk` use a temporary development signing key and cannot update previous builds with another key. A configured persistent signing identity removes this suffix.
           - iOS `-unsigned.ipa` requires your own signing/provisioning before installation.
-          - Standalone reignhub-server binaries embed Web, use SQLite, and enable TCP/UDP discovery by default. Edit the bundled config.json before starting. Package-manager definitions are included separately.
-          - To run a STUN and native relay node, use `{"services":{"stun":{},"relay":{}}}`. Read the persistent node credential with `--print-relay-credential` and register it with the control service. Open 26331 and 26332 on UDP and TCP. Follow the [open-source self-hosting guide](https://reignhub.app/docs/self-hosting).
-          - Verify downloads against `SHA256SUMS` or the individual `.sha256` files.
+          - Standalone reignhub-server binaries embed Web, use SQLite, and enable TCP/UDP discovery by default. Edit the bundled config.json before starting. When upgrading from RC.2, set `enable: false` on any Go service or transport previously disabled by omission.
+          - To run a STUN and native relay node, use `{"services":{"control":{"enable":false}}}`. Read the persistent node credential with `--print-relay-credential` and register it with the control service. Open 26331 and 26332 on UDP and TCP. Follow the [open-source self-hosting guide](https://reignhub.app/docs/self-hosting).
+          - GitHub displays the SHA-256 digest for each download.
           - Native clients default to https://reignhub.app; self-hosted services can be configured in settings. Web uses its current origin.
           NOTES
       - name: Publish only after every build succeeds
@@ -500,7 +494,10 @@ jobs:
             gh release create "$TAG" --verify-tag --draft --title "ReignHub $VERSION" \
               --generate-notes --notes-file build-notes.md
           fi
-          gh release upload "$TAG" dist/release/* --clobber
+          cd dist/release
+          sha256sum --check --strict SHA256SUMS
+          mapfile -t packages < <(cut -d ' ' -f 3 SHA256SUMS)
+          gh release upload "$TAG" "${packages[@]}" --clobber
           if [[ "$VERSION" == *-* ]]; then
             gh release edit "$TAG" --draft=false --prerelease
           else

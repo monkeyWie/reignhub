@@ -19,6 +19,7 @@ type Meter struct {
 	pending                                                        int
 	buckets                                                        [5]trafficBucket
 	response                                                       time.Duration
+	probe                                                          time.Duration
 }
 
 func (m *Meter) Connected() { m.mu.Lock(); m.started = time.Now(); m.mu.Unlock() }
@@ -65,6 +66,9 @@ func (m *Meter) Begin(method string) func(error) {
 		m.pending--
 		if err == nil {
 			m.response = time.Since(started)
+			if method == "network" {
+				m.probe = m.response
+			}
 			m.lastResponse = time.Now()
 		}
 	}
@@ -96,3 +100,6 @@ func (m *Meter) Snapshot() map[string]any {
 	}
 	return result
 }
+
+// ProbeDuration measures a completed, lightweight end-to-end network request.
+func (m *Meter) ProbeDuration() time.Duration { m.mu.Lock(); defer m.mu.Unlock(); return m.probe }

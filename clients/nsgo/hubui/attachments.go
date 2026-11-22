@@ -258,6 +258,10 @@ func (s *State) runUpload(ctx context.Context, u *Upload) {
 			err = fmt.Errorf("上传结果校验失败")
 		}
 	}
+	if err == nil && !u.cancelled.Load() && strings.HasPrefix(http.DetectContentType(u.Data), "image/") {
+		// The provider may import the same image under a different transcript ID.
+		_, _ = s.api.Call(ctx, "client.assetCache.put", Object{"key": originalImageKey(u.Provider, u.Session, sum), "data": base64.StdEncoding.EncodeToString(u.Data)}, u.Target, nil)
+	}
 	if u.cancelled.Load() {
 		cleanup, stop := context.WithTimeout(s.ctx, 3*time.Second)
 		_, _ = rpc(cleanup, s.api, u.Target, u.Provider, u.Session, "attachment.abort", Object{"params": Object{"id": id}})
@@ -359,6 +363,10 @@ func (s *State) uploadPreviews(cx *core.Scope) core.Node {
 	return core.View{Style: core.Style{Direction: core.Row, Wrap: core.Wrap, Gap: 8}, Children: []core.Node{rows}}
 }
 
+func originalImageKey(provider, session, digest string) string {
+	return provider + "|" + session + "|original:" + digest
+}
+
 func (s *State) attachmentBytes(ctx context.Context, target, p, session string, a Object, thumbnail bool) ([]byte, error) {
 	return s.attachmentBytesProgress(ctx, target, p, session, a, thumbnail, nil)
 }
@@ -367,6 +375,9 @@ func (s *State) attachmentBytes(ctx context.Context, target, p, session string, 
 // final digest. Progress counts bytes actually received, never queued requests.
 func (s *State) attachmentBytesProgress(ctx context.Context, target, p, session string, a Object, thumbnail bool, progress func(int64, int64)) ([]byte, error) {
 	key := p + "|" + session + "|" + str(a, "id") + fmt.Sprint("|", thumbnail)
+	if !thumbnail && str(a, "kind") == "image" && str(a, "sha256") != "" {
+		key = originalImageKey(p, session, str(a, "sha256"))
+	}
 	cached, _ := s.api.Call(ctx, "client.assetCache.get", Object{"key": key}, target, nil)
 	if ctx.Err() != nil {
 		return nil, ctx.Err()

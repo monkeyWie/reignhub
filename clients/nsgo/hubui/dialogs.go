@@ -291,25 +291,7 @@ func (s *State) dialogView(cx *core.Scope, kind string) core.Node {
 		}, Children: []core.Node{s.local(cx)}})
 		footer = nil
 	case kind == "device":
-		title = s.environmentName(dialogTarget)
-		target := dialogTarget
-		children = append(children, dynamicText(cx, func() string { s.read(); return s.connectionTitle(target) }, 13, true), label(cx, locales.For(s.cx).DeviceJoinsDirectory(), 13, true),
-			button(cx, "device-details", "连接详情", lucide.Info, "outline", func() { s.connectionDetailTarget = target; s.dialog.Set("connection-status") }),
-			labelledIconButton(cx, "forget-device", "移除设备", lucide.Trash, func() { s.dialog.Set("forget") }),
-		)
-		footer = []core.Node{
-			button(cx, "reconnect-device", "连接 / 重连", lucide.RefreshCw, "primary", func() {
-				if s.connectionReady(target) {
-					s.reconnectDevice(target)
-				} else {
-					s.connectSavedDevice(target)
-				}
-				close()
-			}),
-			s.actionButton(cx, "disconnect-device", "断开", nil, "outline", func() {
-				s.call("disconnect:"+target, "client.disconnect", Object{"id": target}, func(any) { s.cancelTargetCatalogue(target); close() })
-			}),
-		}
+		return s.deviceDialog(cx, dialogTarget, d, close)
 	case kind == "create":
 		title = "新建会话"
 		locations := s.createProject
@@ -475,7 +457,10 @@ func modalDialog(cx *core.Scope, d ui.Dialog, close func()) ui.Dialog {
 	if d.Label == "" {
 		d.Label = d.Title
 	}
-	header := dialogHeader(cx, d.TestID+"-close", d.Title, close)
+	return modalWithHeader(cx, d, dialogHeader(cx, d.TestID+"-close", d.Title, close))
+}
+
+func modalWithHeader(cx *core.Scope, d ui.Dialog, header core.Node) ui.Dialog {
 	children := []core.Node{header}
 	if d.Description != "" {
 		children = append(children, label(cx, d.Description, 13, true))
@@ -510,14 +495,19 @@ func modalDialog(cx *core.Scope, d ui.Dialog, close func()) ui.Dialog {
 }
 
 func dialogHeader(cx *core.Scope, id, title string, close func()) core.Node {
-	x := labelledIconButton(cx, id, "关闭弹窗", lucide.X, close).(core.View)
+	x := dialogCloseButton(cx, id, close)
+	t := core.Text{Content: title, Role: core.RoleHeader, Style: ui.TypeTitle.Merge(core.Style{FlexGrow: 1, FlexShrink: 1, MinWidth: core.Pt(0)})}
+	return core.View{TestID: id + "-header", Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 12, Margin: core.Edges{Top: -8, Right: -8}}, Children: []core.Node{t, x}}
+}
+
+func dialogCloseButton(cx *core.Scope, id string, close func()) core.View {
+	x := labelledIconButton(cx, id, locales.For(cx).CloseDialog(), lucide.X, close).(core.View)
 	x.Style.Width, x.Style.Height = core.Pt(36), core.Pt(36)
 	x.Style.Padding = core.All(8)
 	if ui.Touch(cx) {
 		x.Style.Width, x.Style.Height = core.Pt(44), core.Pt(44)
 	}
-	t := core.Text{Content: title, Role: core.RoleHeader, Style: ui.TypeTitle.Merge(core.Style{FlexGrow: 1, FlexShrink: 1, MinWidth: core.Pt(0)})}
-	return core.View{TestID: id + "-header", Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 12, Margin: core.Edges{Top: -8, Right: -8}}, Children: []core.Node{t, x}}
+	return x
 }
 
 func (s *State) hostAuthorizationDialog(cx *core.Scope, id string, close func()) core.Node {
@@ -600,19 +590,54 @@ func (s *State) imagePreview(cx *core.Scope, close func()) core.Node {
 			return nil
 		}
 		a := s.preview[index.Get()]
-		localData, local := a["localData"].([]byte)
-		if !local {
-			s.loadImage(a, false)
+		key := s.key() + "|" + str(a, "id")
+		data, _ := a["localData"].([]byte)
+		if len(data) == 0 {
+			data = s.images[key+"|false"]
 		}
-		key := s.key() + "|" + str(a, "id") + "|false"
-		img := core.Image{TestID: "preview-image", SourceFunc: func() core.ImageSource {
-			s.read()
-			if local {
-				return core.ImageSource{Data: localData}
+		original := core.NewSignalFunc(cx, data, nil)
+		failure := core.NewSignal(cx, "")
+		ctx, cancel := context.WithCancel(cx.Context())
+		cx.Cleanup(cancel)
+		target, p, session := s.target, str(s.selected, "providerId"), str(s.selected, "id")
+		load := func() {
+			failure.Set("")
+			go func() {
+				b, err := s.attachmentBytes(ctx, target, p, session, a, false)
+				cx.Post(func() {
+					if ctx.Err() != nil {
+						return
+					}
+					if err != nil {
+						failure.Set(err.Error())
+						return
+					}
+					original.Set(b)
+					s.cacheImage(key+"|false", b)
+				})
+			}()
+		}
+		if len(data) == 0 {
+			load()
+		}
+		img := core.Image{TestID: "preview-image", Label: str(a, "name"), SourceFunc: func() core.ImageSource {
+			if b := original.Get(); len(b) > 0 {
+				return core.ImageSource{Data: b}
 			}
-			return core.ImageSource{Data: s.images[key]}
+			s.read()
+			return core.ImageSource{Data: s.images[key+"|true"]}
 		}, ResizeMode: core.Contain, Style: fill.Merge(core.Style{AlignSelf: core.AlignStretch})}
-		return core.View{Style: fill.Merge(core.Style{Direction: core.Row, AlignItems: core.AlignCenter}), Children: []core.Node{button(cx, "preview-previous", "", lucide.ChevronLeft, "ghost", func() { move(-1) }), img, button(cx, "preview-next", "", lucide.ChevronRight, "ghost", func() { move(1) })}}
+		status := core.Dynamic(func(cx *core.Scope) core.Node {
+			if msg := failure.Get(); msg != "" {
+				return row(label(cx, msg, 12, true), button(cx, "preview-retry", locales.For(cx).PreviewRetry(), lucide.RotateCcw, "outline", load))
+			}
+			if len(original.Get()) == 0 {
+				return label(cx, locales.For(cx).PreviewLoading(), 12, true)
+			}
+			return nil
+		})
+		center := core.View{Style: fill.Merge(core.Style{AlignSelf: core.AlignStretch}), Children: []core.Node{img, status}}
+		return core.View{Style: fill.Merge(core.Style{Direction: core.Row, AlignItems: core.AlignCenter}), Children: []core.Node{button(cx, "preview-previous", "", lucide.ChevronLeft, "ghost", func() { move(-1) }), center, button(cx, "preview-next", "", lucide.ChevronRight, "ghost", func() { move(1) })}}
 	})
 	return base.Dialog{TestID: "image-preview", Label: "图片预览", Open: func() bool { return true }, OnOpenChange: func(open bool, _ base.Reason) {
 		if !open {

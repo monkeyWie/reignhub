@@ -181,11 +181,7 @@ export function ReleaseDownloads({
         className="site-section site-width hosting-downloads"
       >
         <h2>{t("服务端下载")}</h2>
-        <p>
-          {t(
-            "Go 服务按系统和 CPU 架构打包，内含程序和 config.json。Worker 提供独立部署包。",
-          )}
-        </p>
+        <p>{t("Go 服务按系统和 CPU 架构打包，内含程序和 config.json。")}</p>
         <div className="download-assets">
           {release?.hostingAssets?.map((asset) => (
             <a

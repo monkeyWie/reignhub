@@ -10,7 +10,6 @@ import {
   type Decision,
 } from "@reignhub/protocol";
 import { devices, type DeviceRow } from "./schema";
-import { externalRelays, relayWelcome } from "./external-relay";
 import { id, issueGrant } from "./crypto";
 import { unrestricted, type CoreEnv, type Policy } from "./types";
 import { body, canAccess, fail, json } from "./index";
@@ -25,7 +24,6 @@ interface SocketState {
   grant: string;
   expires: number;
   allowRelay: boolean;
-  nativeRelay?: Frame["nativeRelay"];
   window: number;
   count: number;
   bytes: number;
@@ -175,7 +173,6 @@ export class ReignHubRoom extends DurableObject<CoreEnv> {
           throw new APIError("SIGNAL_REQUIRED", "请先建立信令连接", 409);
         state = {
           ...this.state(signal)!,
-          nativeRelay: undefined,
           route: "relay",
         };
         const decision = await this.decision(state, "relay");
@@ -211,36 +208,6 @@ export class ReignHubRoom extends DurableObject<CoreEnv> {
           role,
           decision,
         );
-        let nativeRelay: Frame["nativeRelay"];
-        if (
-          decision.limits.allowRelay &&
-          request.headers.has("x-reignhub-native")
-        ) {
-          const nodes = externalRelays(this.env);
-          const selected =
-            role === "host"
-              ? nodes.length
-                ? nodes[parseInt(hostID.slice(0, 8), 16) % nodes.length]
-                : undefined
-              : nodes.find(
-                  (n) =>
-                    n.endpoint.pin ===
-                    this.state(currentHost!)?.nativeRelay?.pin,
-                );
-          if (selected)
-            nativeRelay = await relayWelcome(
-              selected,
-              hostID,
-              role === "host" ? peer : this.state(currentHost!)!.generation,
-              peer,
-              role,
-              grant.expires,
-            );
-        }
-        // Only a fully authenticated and admitted owner may replace its own
-        // lingering host socket. A lost close frame must not block restarts.
-        if (role === "host" && currentHost)
-          this.disconnect(currentHost, 1012, "host connection replaced");
         state = {
           role,
           route: "signal",
@@ -250,7 +217,6 @@ export class ReignHubRoom extends DurableObject<CoreEnv> {
           generation:
             role === "host" ? peer : this.state(currentHost!)!.generation,
           closed: false,
-          nativeRelay,
           grant: grant.ticket,
           expires: grant.expires,
           allowRelay: decision.limits.allowRelay,
@@ -258,6 +224,9 @@ export class ReignHubRoom extends DurableObject<CoreEnv> {
           count: 0,
           bytes: 0,
         };
+        // Replace the previous host only after admission and relay selection succeed.
+        if (role === "host" && currentHost)
+          this.disconnect(currentHost, 1012, "host connection replaced");
       }
       const [client, server] = Object.values(new WebSocketPair());
       server.serializeAttachment(state);
@@ -270,7 +239,6 @@ export class ReignHubRoom extends DurableObject<CoreEnv> {
         kind: "welcome",
         peer: state.peer,
         protocol: PROTOCOL,
-        nativeRelay: state.route === "signal" ? state.nativeRelay : undefined,
         allowRelay: state.allowRelay,
         grant: state.grant,
       });
@@ -322,27 +290,9 @@ export class ReignHubRoom extends DurableObject<CoreEnv> {
         state.grant = next.ticket;
         state.expires = next.expires;
         state.allowRelay = decision.limits.allowRelay;
-        if (state.nativeRelay) {
-          const node =
-            state.allowRelay &&
-            externalRelays(this.env).find(
-              (n) => n.endpoint.pin === state.nativeRelay!.pin,
-            );
-          state.nativeRelay = node
-            ? await relayWelcome(
-                node,
-                state.host,
-                state.generation,
-                state.peer,
-                state.role,
-                state.expires,
-              )
-            : undefined;
-        }
         ws.serializeAttachment(state);
         this.send(ws, {
           kind: "lease",
-          nativeRelay: state.nativeRelay,
           peer: state.peer,
           grant: state.grant,
           allowRelay: state.allowRelay,

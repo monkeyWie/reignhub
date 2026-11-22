@@ -6,8 +6,7 @@ import {
 } from "cloudflare:test";
 import { beforeAll, describe, it, expect } from "vitest";
 import { externalRelays } from "../src/external-relay";
-import { un64 } from "../src/crypto";
-import { routes, type Frame } from "@reignhub/protocol";
+import { routes } from "@reignhub/protocol";
 import { handleCore, room, type CoreEnv } from "../src";
 const bindings = env as unknown as CoreEnv & {
   TEST_RELAY_SIGNER: JsonWebKey;
@@ -167,7 +166,21 @@ describe("device authorization and separated ingress", () => {
     expect(resolve(["udp:relay.example:26332"])).toEqual([
       { udpAddress: "relay.example:26332", pin },
     ]);
+    expect(
+      resolve(["relay.example:26332", "wss://Relay.Example:443/"]),
+    ).toEqual([
+      {
+        address: "relay.example:26332",
+        pin,
+        wss: "wss://relay.example/p2p/node",
+      },
+    ]);
     for (const addresses of [
+      ["wss://a/a"],
+      ["wss://a", "wss://b"],
+      ["wss://user@relay.example"],
+      ["wss://relay.example/?x=1"],
+      ["wss://relay.example:65536"],
       [],
       ["relay.example:26332", "tcp:relay.example:443"],
       ["udp://relay.example:443"],
@@ -274,45 +287,21 @@ describe("device authorization and separated ingress", () => {
     const welcome = await message(client);
     expect(welcome.allowRelay).toBe(true);
     expect(welcome.grant).toBeTruthy();
-    const hostNode = (hostWelcome as Frame).nativeRelay!;
-    const clientNode = (welcome as Frame).nativeRelay!;
-    expect(hostNode).toMatchObject({
-      udpAddress: "relay.example:26332",
-      tcpAddress: "relay.example:26333",
-    });
-    expect(clientNode.udpAddress).toEqual(hostNode.udpAddress);
-    expect(clientNode.tcpAddress).toEqual(hostNode.tcpAddress);
-    expect(clientNode.pin).toEqual(hostNode.pin);
-    expect(clientNode.ticket).not.toEqual(hostNode.ticket);
-    expect(JSON.stringify(welcome)).not.toContain(bindings.TEST_RELAY_SIGNER.d);
-    const key = await crypto.subtle.importKey(
-      "raw",
-      un64(bindings.TEST_RELAY_SIGNER.d!),
-      { name: "HMAC", hash: "SHA-256" },
-      false,
-      ["verify"],
+    const hostNode = (
+      (await (
+        await post(routes.enrollment, { host: h.id }, h.token)
+      ).json()) as { node: { key: string; pin: string } }
+    ).node;
+    const clientNode = (
+      (await (
+        await post(routes.enrollment, { host: h.id }, c.token)
+      ).json()) as { node: { key: string; pin: string } }
+    ).node;
+    expect(hostNode.pin).toEqual(clientNode.pin);
+    expect(hostNode.key).not.toEqual(clientNode.key);
+    expect(JSON.stringify(clientNode)).not.toContain(
+      bindings.TEST_RELAY_SIGNER.d,
     );
-    for (const [node, role, peer] of [
-      [hostNode, "host", hostWelcome.peer],
-      [clientNode, "client", welcome.peer],
-    ] as const) {
-      const fields = node.ticket.split(".");
-      expect(fields.slice(0, 5)).toEqual([
-        "rh2",
-        h.id,
-        hostWelcome.peer,
-        peer,
-        role,
-      ]);
-      expect(
-        await crypto.subtle.verify(
-          "HMAC",
-          key,
-          un64(fields[6]),
-          new TextEncoder().encode(fields.slice(0, 6).join(".")),
-        ),
-      ).toBe(true);
-    }
     const dr = await socket(
       h.id,
       c.token,
@@ -343,6 +332,48 @@ describe("device authorization and separated ingress", () => {
     host.close();
     data.close();
     hostRelay.close();
+  });
+  it("requires host consent for browser enrollment and denies browser host roles", async () => {
+    const host = await register(true),
+      other = await register();
+    expect(
+      (await post(routes.enrollment, { host: host.id }, other.token)).status,
+    ).toBe(403);
+    const res = await SELF.fetch("https://reignhub.test" + routes.enrollment, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer " + host.token,
+        Origin: "https://reignhub.test",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ host: host.id }),
+    });
+    expect(res.status).toBe(403);
+    const request = crypto.randomUUID().replaceAll("-", "");
+    await post(
+      routes.request,
+      { id: request, host: host.id, envelope: "fixture" },
+      other.token,
+    );
+    await post(
+      routes.respond,
+      { id: request, allow: true, reply: "fixture" },
+      host.token,
+    );
+    const allowed = await SELF.fetch(
+      "https://reignhub.test" + routes.enrollment,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer " + other.token,
+          Origin: "https://reignhub.test",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ host: host.id }),
+      },
+    );
+    expect(allowed.status).toBe(200);
+    expect(await allowed.json()).toHaveProperty("grant");
   });
   it("isolates expired controllers from the host's shared reply socket", async () => {
     const h = await register(true),

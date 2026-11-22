@@ -16,7 +16,11 @@ export const devices = sqliteTable("devices", {
 });
 export const grants = sqliteTable(
   "device_grants",
-  { host: text("host").notNull(), client: text("client").notNull() },
+  {
+    host: text("host").notNull(),
+    client: text("client").notNull(),
+    pairing: text("pairing").notNull().default(""),
+  },
   (t) => [primaryKey({ columns: [t.host, t.client] })],
 );
 export const pairings = sqliteTable(

@@ -74,6 +74,7 @@ export async function issueGrant(
   deviceId: string,
   role: Role,
   decision: Decision,
+  mode: "online" | "private" | "managed" = "online",
 ): Promise<{ ticket: string; expires: number }> {
   const identity = await serviceIdentity(env);
   const now = Math.floor(Date.now() / 1000);
@@ -83,10 +84,14 @@ export async function issueGrant(
     hostId,
     deviceId,
     role,
-    scopes: ["connect", ...(decision.limits.allowRelay ? ["relay"] : [])],
+    scopes: [
+      "connect",
+      ...(mode !== "online" ? ["offline"] : []),
+      ...(decision.limits.allowRelay ? ["relay"] : []),
+    ],
     products: decision.products,
     iat: now,
-    exp: now + 180,
+    exp: mode === "private" ? 0 : now + 180,
     jti: id(),
   };
   const payload = bytes64(enc.encode(JSON.stringify(grant)));

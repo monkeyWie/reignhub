@@ -4,9 +4,10 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"errors"
+	"time"
+
 	"github.com/monkeyWie/reignhub/internal/control"
 	"github.com/monkeyWie/reignhub/pkg/access"
-	"time"
 )
 
 var errConnectionAuthorization = errors.New("连接授权已失效，请重新连接")
@@ -20,6 +21,15 @@ func authorizationFailure(id string, err error) control.Response {
 }
 
 func (w *wire) authorize(host, device string, req control.Request) error {
+	w.grantMu.RLock()
+	ticket := w.grant
+	if w.offlineGrant != "" {
+		ticket = w.offlineGrant
+	}
+	w.grantMu.RUnlock()
+	return w.authorizeTicket(ticket, host, device, req)
+}
+func (w *wire) authorizeTicket(ticket, host, device string, req control.Request) error {
 	if w.opts.GrantPublicKey == "" {
 		if w.opts.GrantRequired || w.opts.ServiceID != "" {
 			return errors.New("服务未提供有效的授权公钥")
@@ -30,11 +40,11 @@ func (w *wire) authorize(host, device string, req control.Request) error {
 	if err != nil {
 		return err
 	}
-	w.grantMu.RLock()
-	ticket := w.grant
-	w.grantMu.RUnlock()
 	g, err := access.Verify(ed25519.PublicKey(key), ticket, time.Now())
 	if err != nil || g.Role != "client" || !g.Allows(w.opts.ServiceID, host, device, "connect") {
+		return errConnectionAuthorization
+	}
+	if (w.independent != nil || req.Method == "peer.grant") && !g.Allows(w.opts.ServiceID, host, device, "offline") {
 		return errConnectionAuthorization
 	}
 	if req.Provider != "" && !g.AllowsProduct(req.Provider) {

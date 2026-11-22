@@ -134,7 +134,14 @@ const (
 	textExecutionDirectory
 	textNoCreateAgent
 	textConnectAndSelectAgent
-	textDeviceJoinsDirectory
+	textCloseDialog
+	textDeviceConnected
+	textDeviceDisconnected
+	textDeviceOffline
+	textDeviceConnectionDetails
+	textConnectDevice
+	textDisconnectDevice
+	textRemoveDevice
 	textLocalManagement
 	textSessionFilters
 	textCloseFilters
@@ -199,6 +206,8 @@ const (
 	textTerminalSelectAll
 	textRemoteTerminal
 	textRemoteTerminalHint
+	textPreviewLoading
+	textPreviewRetry
 	numTexts
 )
 
@@ -258,7 +267,14 @@ var keyOfText = [numTexts]string{
 	"executionDirectory",
 	"noCreateAgent",
 	"connectAndSelectAgent",
-	"deviceJoinsDirectory",
+	"closeDialog",
+	"deviceConnected",
+	"deviceDisconnected",
+	"deviceOffline",
+	"deviceConnectionDetails",
+	"connectDevice",
+	"disconnectDevice",
+	"removeDevice",
 	"localManagement",
 	"sessionFilters",
 	"closeFilters",
@@ -323,6 +339,8 @@ var keyOfText = [numTexts]string{
 	"terminalSelectAll",
 	"remoteTerminal",
 	"remoteTerminalHint",
+	"previewLoading",
+	"previewRetry",
 }
 
 // textsEn are the messages without arguments in en.
@@ -332,7 +350,7 @@ var textsEn = i18n.NewTexts(""+
 	"Retry upload"+
 	"Remove attachment"+
 	"Response latency"+
-	"Last successful RPC, including host processing and queueing; not network RTT. No extra probes are sent."+
+	"Last successful RPC, including host processing and queueing; not network RTT. Path selection also samples a small encrypted network request."+
 	"Upload"+
 	"Download"+
 	"Connected for"+
@@ -380,7 +398,14 @@ var textsEn = i18n.NewTexts(""+
 	"Working directory (absolute path on execution device)"+
 	"No Agent on this device can create sessions. Enable one on that device first."+
 	"Connect a device and select a ready Agent first."+
-	"Sessions join the shared list when connected."+
+	"Close dialog"+
+	"Connected"+
+	"Disconnected"+
+	"Device offline"+
+	"Connection details"+
+	"Connect"+
+	"Disconnect"+
+	"Remove device"+
 	"This device and remote access"+
 	"Filter sessions"+
 	"Close filters"+
@@ -444,14 +469,16 @@ var textsEn = i18n.NewTexts(""+
 	"Paste"+
 	"Select all"+
 	"Allow remote terminals"+
-	"Paired devices can run commands on this computer.",
+	"Paired devices can run commands on this computer."+
+	"Loading original image…"+
+	"Retry",
 	[]uint16{
 		6,
 		17,
 		12,
 		17,
 		16,
-		103,
+		140,
 		6,
 		8,
 		13,
@@ -499,7 +526,14 @@ var textsEn = i18n.NewTexts(""+
 		53,
 		77,
 		48,
-		45,
+		12,
+		9,
+		12,
+		14,
+		18,
+		7,
+		10,
+		13,
 		29,
 		15,
 		13,
@@ -564,6 +598,8 @@ var textsEn = i18n.NewTexts(""+
 		10,
 		22,
 		49,
+		25,
+		5,
 	})
 
 // textsZhHans are the messages without arguments in zh-Hans.
@@ -573,7 +609,7 @@ var textsZhHans = i18n.NewTexts(""+
 	"重试上传"+
 	"移除附件"+
 	"响应延迟"+
-	"最近一次成功请求的耗时，包含设备处理和排队，并非纯网络延迟；不会额外发送探测请求。"+
+	"最近一次成功请求的耗时，包含设备处理和排队，并非纯网络延迟；选路时也会用轻量加密请求采样。"+
 	"上传速率"+
 	"下载速率"+
 	"连接时长"+
@@ -621,7 +657,14 @@ var textsZhHans = i18n.NewTexts(""+
 	"工作目录（执行设备上的绝对路径）"+
 	"此设备暂无可新建会话的 Agent，请先在该设备上启用。"+
 	"请先连接设备并选择已就绪的 Agent"+
-	"连接后，会话会自动加入统一列表。"+
+	"关闭弹窗"+
+	"已连接"+
+	"未连接"+
+	"设备离线"+
+	"连接详情"+
+	"连接"+
+	"断开连接"+
+	"移除设备"+
 	"本机与远程访问"+
 	"筛选会话"+
 	"关闭筛选"+
@@ -685,14 +728,16 @@ var textsZhHans = i18n.NewTexts(""+
 	"粘贴"+
 	"全选"+
 	"允许远程终端"+
-	"允许已配对设备在这台电脑上运行命令。",
+	"允许已配对设备在这台电脑上运行命令。"+
+	"正在加载原图…"+
+	"重试",
 	[]uint16{
 		6,
 		12,
 		12,
 		12,
 		12,
-		123,
+		135,
 		12,
 		12,
 		12,
@@ -740,7 +785,14 @@ var textsZhHans = i18n.NewTexts(""+
 		48,
 		72,
 		45,
-		48,
+		12,
+		9,
+		9,
+		12,
+		12,
+		6,
+		12,
+		12,
 		21,
 		12,
 		12,
@@ -805,6 +857,8 @@ var textsZhHans = i18n.NewTexts(""+
 		6,
 		18,
 		54,
+		21,
+		6,
 	})
 
 // texts returns the messages without arguments in lang, nil for a
@@ -969,7 +1023,7 @@ func RequestLatency(cx *core.Scope) string { return For(cx).RequestLatency() }
 // RequestLatency is the package's RequestLatency in the language of msgs.
 func (msgs Messages) RequestLatency() string { return msgs.text(textRequestLatency) }
 
-// RequestLatencyHint says "Last successful RPC, including host processing and queueing; not network RTT. No extra probes are sent."
+// RequestLatencyHint says "Last successful RPC, including host processing and queueing; not network RTT. Path selection also samples a small encrypted network request."
 // in the language the app shows under cx.
 func RequestLatencyHint(cx *core.Scope) string { return For(cx).RequestLatencyHint() }
 
@@ -1327,12 +1381,61 @@ func ConnectAndSelectAgent(cx *core.Scope) string { return For(cx).ConnectAndSel
 // ConnectAndSelectAgent is the package's ConnectAndSelectAgent in the language of msgs.
 func (msgs Messages) ConnectAndSelectAgent() string { return msgs.text(textConnectAndSelectAgent) }
 
-// DeviceJoinsDirectory says "Sessions join the shared list when connected."
+// CloseDialog says "Close dialog"
 // in the language the app shows under cx.
-func DeviceJoinsDirectory(cx *core.Scope) string { return For(cx).DeviceJoinsDirectory() }
+func CloseDialog(cx *core.Scope) string { return For(cx).CloseDialog() }
 
-// DeviceJoinsDirectory is the package's DeviceJoinsDirectory in the language of msgs.
-func (msgs Messages) DeviceJoinsDirectory() string { return msgs.text(textDeviceJoinsDirectory) }
+// CloseDialog is the package's CloseDialog in the language of msgs.
+func (msgs Messages) CloseDialog() string { return msgs.text(textCloseDialog) }
+
+// DeviceConnected says "Connected"
+// in the language the app shows under cx.
+func DeviceConnected(cx *core.Scope) string { return For(cx).DeviceConnected() }
+
+// DeviceConnected is the package's DeviceConnected in the language of msgs.
+func (msgs Messages) DeviceConnected() string { return msgs.text(textDeviceConnected) }
+
+// DeviceDisconnected says "Disconnected"
+// in the language the app shows under cx.
+func DeviceDisconnected(cx *core.Scope) string { return For(cx).DeviceDisconnected() }
+
+// DeviceDisconnected is the package's DeviceDisconnected in the language of msgs.
+func (msgs Messages) DeviceDisconnected() string { return msgs.text(textDeviceDisconnected) }
+
+// DeviceOffline says "Device offline"
+// in the language the app shows under cx.
+func DeviceOffline(cx *core.Scope) string { return For(cx).DeviceOffline() }
+
+// DeviceOffline is the package's DeviceOffline in the language of msgs.
+func (msgs Messages) DeviceOffline() string { return msgs.text(textDeviceOffline) }
+
+// DeviceConnectionDetails says "Connection details"
+// in the language the app shows under cx.
+func DeviceConnectionDetails(cx *core.Scope) string { return For(cx).DeviceConnectionDetails() }
+
+// DeviceConnectionDetails is the package's DeviceConnectionDetails in the language of msgs.
+func (msgs Messages) DeviceConnectionDetails() string { return msgs.text(textDeviceConnectionDetails) }
+
+// ConnectDevice says "Connect"
+// in the language the app shows under cx.
+func ConnectDevice(cx *core.Scope) string { return For(cx).ConnectDevice() }
+
+// ConnectDevice is the package's ConnectDevice in the language of msgs.
+func (msgs Messages) ConnectDevice() string { return msgs.text(textConnectDevice) }
+
+// DisconnectDevice says "Disconnect"
+// in the language the app shows under cx.
+func DisconnectDevice(cx *core.Scope) string { return For(cx).DisconnectDevice() }
+
+// DisconnectDevice is the package's DisconnectDevice in the language of msgs.
+func (msgs Messages) DisconnectDevice() string { return msgs.text(textDisconnectDevice) }
+
+// RemoveDevice says "Remove device"
+// in the language the app shows under cx.
+func RemoveDevice(cx *core.Scope) string { return For(cx).RemoveDevice() }
+
+// RemoveDevice is the package's RemoveDevice in the language of msgs.
+func (msgs Messages) RemoveDevice() string { return msgs.text(textRemoveDevice) }
 
 // LocalManagement says "This device and remote access"
 // in the language the app shows under cx.
@@ -2009,3 +2112,17 @@ func RemoteTerminalHint(cx *core.Scope) string { return For(cx).RemoteTerminalHi
 
 // RemoteTerminalHint is the package's RemoteTerminalHint in the language of msgs.
 func (msgs Messages) RemoteTerminalHint() string { return msgs.text(textRemoteTerminalHint) }
+
+// PreviewLoading says "Loading original image…"
+// in the language the app shows under cx.
+func PreviewLoading(cx *core.Scope) string { return For(cx).PreviewLoading() }
+
+// PreviewLoading is the package's PreviewLoading in the language of msgs.
+func (msgs Messages) PreviewLoading() string { return msgs.text(textPreviewLoading) }
+
+// PreviewRetry says "Retry"
+// in the language the app shows under cx.
+func PreviewRetry(cx *core.Scope) string { return For(cx).PreviewRetry() }
+
+// PreviewRetry is the package's PreviewRetry in the language of msgs.
+func (msgs Messages) PreviewRetry() string { return msgs.text(textPreviewRetry) }

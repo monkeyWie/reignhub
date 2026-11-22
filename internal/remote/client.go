@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/coder/websocket"
 	"github.com/monkeyWie/reignhub/internal/connectivity"
 	"github.com/monkeyWie/reignhub/internal/control"
 	"github.com/monkeyWie/reignhub/internal/provider"
@@ -18,6 +19,7 @@ import (
 )
 
 type Client struct {
+	routes       *connectivity.PathPool[*Client]
 	hostPlatform string
 	wire         *wire
 	mu           sync.Mutex
@@ -54,39 +56,12 @@ func connectOnce(ctx context.Context, p Pairing, opts Options) (*Client, error) 
 	if err != nil {
 		return nil, err
 	}
-	c := &Client{pending: make(map[string]*pendingCall), done: make(chan struct{})}
-	w, err := newWire(context.Background(), ws, peer, p.Key, false, opts, func(data []byte) {
-		var r control.Response
-		if json.Unmarshal(data, &r) != nil {
-			return
-		}
-		c.mu.Lock()
-		ch := c.pending[r.ID]
-		c.mu.Unlock()
-		if ch != nil && ch.ctx.Err() == nil {
-			ch.responses.PushSequence(r, len(data), r.Sequence)
-		}
-
-	})
+	c, err := newClientPeer(ws, peer, p, opts)
 	if err != nil {
 		ws.CloseNow()
 		return nil, err
 	}
-	w.native.welcome, w.native.hostID = welcome.Native, p.Host
-	c.wire = w
-	w.wantsResponse = func(id string) bool {
-		c.mu.Lock()
-		defer c.mu.Unlock()
-		pending := c.pending[id]
-		if pending == nil {
-			return false
-		}
-		pending.idle.Touch()
-		if pending.method != "network" {
-			w.meter.Progress()
-		}
-		return true
-	}
+	w := c.wire
 	w.relayLink = &relayLink{}
 	w.relayLink.socket.Store(dataWS)
 	go func() {
@@ -95,9 +70,8 @@ func connectOnce(ctx context.Context, p Pairing, opts Options) (*Client, error) 
 		close(c.done)
 	}()
 	heartbeat := newSocketHeartbeat()
-	heartbeat.nativeLease = welcome.Native != nil && relay.IsExternalTicket(welcome.Native.Ticket)
 	go heartbeat.run(w.ctx, ws, true, opts.Progress)
-	if allowRelay {
+	if allowRelay && !opts.directOnly {
 		// The pairing RPC's context ends after Connect returns. Optional relay
 		// setup belongs to the live wire and must not gate handshake or ICE.
 		relayCtx := connectivity.WithProgress(w.ctx, opts.Progress)
@@ -118,9 +92,6 @@ func connectOnce(ctx context.Context, p Pairing, opts Options) (*Client, error) 
 			heartbeat.received()
 			var f relay.Frame
 			if json.Unmarshal(raw, &f) == nil {
-				if f.Kind == "lease" && f.Peer == peer {
-					w.refreshNativeTicket(f.Native)
-				}
 				w.receive(f)
 			}
 		}
@@ -135,7 +106,7 @@ func connectOnce(ctx context.Context, p Pairing, opts Options) (*Client, error) 
 	}
 	connectivity.Note(ctx, "handshake", "handshake", "端到端加密握手完成", "已验证设备配对密钥", "success")
 	message := "正在尝试 P2P 直连；暂无可用的备用中继通道"
-	hasRelay := allowRelay || (welcome.Native != nil && !opts.DisableNative)
+	hasRelay := allowRelay
 	if hasRelay {
 		message = "优先尝试 P2P 直连，必要时自动使用中继"
 	}
@@ -147,11 +118,6 @@ func connectOnce(ctx context.Context, p Pairing, opts Options) (*Client, error) 
 		message = "正在验证中继连接"
 	}
 	connectivity.Report(ctx, "direct", message, connectivity.StageTimeout)
-	// Negotiation starts after the handshake, not when its potentially slow
-	// control sockets were opened. Give LAN paths their actual head start.
-	w.mu.Lock()
-	w.preferDirectUntil = time.Now().Add(1500 * time.Millisecond)
-	w.mu.Unlock()
 	go w.offer()
 	if err = w.waitPath(ctx); err != nil {
 		c.Close()
@@ -167,20 +133,31 @@ func connectOnce(ctx context.Context, p Pairing, opts Options) (*Client, error) 
 		c.Close()
 		return nil, fmt.Errorf("配对验证失败: %w", err)
 	}
+	if opts.RememberAddresses != nil {
+		opts.RememberAddresses(w.advertised)
+	}
+	if opts.Credentials != nil {
+		go c.refreshPeerGrant(opts.Credentials, "")
+	}
 	c.hostPlatform = statuses.Platform
 	w.meter.Connected()
 	return c, nil
 }
 
 // HostPlatform is the OS reported during encrypted connection verification.
-func (c *Client) HostPlatform() string { return c.hostPlatform }
+func (c *Client) HostPlatform() string {
+	if c.routes != nil {
+		if v := c.routes.Active(); v != nil {
+			return v.HostPlatform()
+		}
+		return ""
+	}
+	return c.hostPlatform
+}
 
 // Business RPCs have no total deadline. End their wait when every usable data
 // path has actually gone away, even if the signaling socket remains open.
 func (c *Client) recoveringPath() bool {
-	if c.wire.native.relayNegotiated.Load() && !c.wire.signalLost.Load() {
-		return true
-	}
 	c.wire.mu.Lock()
 	pc, dc := c.wire.pc, c.wire.dc
 	c.wire.mu.Unlock()
@@ -190,6 +167,13 @@ func (c *Client) recoveringPath() bool {
 // Resume probes the original authenticated data path without re-pairing or
 // replaying any command. A brief ICE interruption can heal on this same peer.
 func (c *Client) Resume(ctx context.Context) error {
+	if c.routes != nil {
+		v := c.routes.Use()
+		if v == nil {
+			return errors.New("连接已关闭")
+		}
+		return v.Resume(ctx)
+	}
 	tick := time.NewTicker(100 * time.Millisecond)
 	defer tick.Stop()
 	for c.Path() == "Disconnected" {
@@ -237,6 +221,12 @@ func (c *Client) watchPaths() {
 }
 
 func (c *Client) Path() string {
+	if c.routes != nil {
+		if v := c.routes.Active(); v != nil {
+			return v.Path()
+		}
+		return "Disconnected"
+	}
 	select {
 	case <-c.done:
 		return "Disconnected"
@@ -246,17 +236,36 @@ func (c *Client) Path() string {
 	if strings.HasPrefix(path, "P2P") {
 		return path
 	}
-	if c.wire.relaySocket() == nil && c.wire.native.relay.Load() == nil {
+	if c.wire.independent == nil && c.wire.relaySocket() == nil {
 		return "Disconnected"
 	}
 	return path
 }
 func (c *Client) Close() error {
+	if c.routes != nil {
+		c.routes.Close()
+		return nil
+	}
 	c.wire.close()
+	if c.wire.independent != nil {
+		c.wire.independent.link.Close()
+		return nil
+	}
 	c.wire.relayLink.close()
 	return c.wire.ws.CloseNow()
 }
 func (c *Client) Call(ctx context.Context, r control.Request, out any) (callErr error) {
+	if c.routes != nil {
+		v := c.routes.Use()
+		if v == nil {
+			return errors.New("连接已关闭")
+		}
+		err := v.Call(ctx, r, out)
+		if errors.Is(err, context.DeadlineExceeded) || v.Path() == "Disconnected" {
+			c.routes.Check()
+		}
+		return err
+	}
 	done := c.wire.meter.Begin(r.Method)
 	defer func() { done(callErr) }()
 	ctx, cancel := context.WithCancel(ctx)
@@ -417,4 +426,49 @@ func (c *Client) remember(key string, entry snapshot) {
 	c.cacheBytes += len(entry.data)
 }
 
-func (c *Client) Metrics() map[string]any { return c.wire.meter.Snapshot() }
+func (c *Client) Metrics() map[string]any {
+	if c.routes != nil {
+		if v := c.routes.Active(); v != nil {
+			return v.Metrics()
+		}
+		return nil
+	}
+	return c.wire.meter.Snapshot()
+}
+
+func newClientPeer(ws *websocket.Conn, peer string, p Pairing, opts Options) (*Client, error) {
+	c := &Client{pending: make(map[string]*pendingCall), done: make(chan struct{})}
+	w, err := newWire(context.Background(), ws, peer, p.Key, false, opts, func(data []byte) {
+		var r control.Response
+		if json.Unmarshal(data, &r) != nil {
+			return
+		}
+		c.mu.Lock()
+		ch := c.pending[r.ID]
+		c.mu.Unlock()
+		if ch != nil && ch.ctx.Err() == nil {
+			ch.responses.PushSequence(r, len(data), r.Sequence)
+		}
+
+	})
+	if err != nil {
+
+		return nil, err
+	}
+	c.wire = w
+	w.wantsResponse = func(id string) bool {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		pending := c.pending[id]
+		if pending == nil {
+			return false
+		}
+		pending.idle.Touch()
+		if pending.method != "network" {
+			w.meter.Progress()
+		}
+		return true
+	}
+
+	return c, nil
+}

@@ -3,6 +3,7 @@ package hubui
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -234,4 +235,45 @@ func TestForegroundPresenceDiscardsLateBackgroundResult(t *testing.T) {
 			return false
 		}
 	})
+}
+
+func TestPairedDeviceMenuTouch(t *testing.T)   { checkPairedDeviceMenu(t, true) }
+func TestPairedDeviceMenuDesktop(t *testing.T) { checkPairedDeviceMenu(t, false) }
+
+func checkPairedDeviceMenu(t *testing.T, phone bool) {
+	t.Helper()
+	var s *State
+	width := choose(phone, core.Points(390), core.Points(1000))
+	env := core.Environment{OS: core.OSMacOS, Idiom: core.IdiomDesktop, Dark: true}
+	if phone {
+		env = core.Environment{OS: core.OSAndroid, Idiom: core.IdiomPhone}
+	}
+	app := nsgotest.Start(t, func(cx *core.Scope) core.Node {
+		s = workspaceLayoutFixture(cx)
+		s.applyColors()
+		s.devices = []Object{{"id": "fixture-host", "name": "Studio MacBook Pro", "platform": "darwin", "connected": true, "path": "Relay · QUIC"}}
+		return s.workspaceView(cx)
+	}, nsgotest.Size(width, 844), nsgotest.Environment(env))
+	showSessionDirectory(t, app)
+	app.Press("id:device-fixture-host")
+	app.WaitFor("id:disconnect-device", time.Second)
+	if app.Exists("id:reconnect-device") || !strings.Contains(app.Find("id:device-summary-status").Text, "Relay · UDP") {
+		t.Fatal("connected device did not present its active path and disconnect action")
+	}
+	app.Screenshot(choose(phone, "device-actions-touch", "device-actions-desktop"))
+	app.Post(func() { s.devices[0]["connected"] = false; s.changed() })
+	app.WaitFor("id:reconnect-device", time.Second)
+	if app.Exists("id:disconnect-device") || strings.Contains(app.Find("id:device-summary-status").Text, "UDP") {
+		t.Fatal("disconnected device retained the old action or route")
+	}
+	app.Press("id:device-details")
+	app.WaitFor("id:dialog-connection-status", time.Second)
+	app.Press("id:dialog-connection-status-close")
+	app.Press("id:device-fixture-host")
+	app.Press("id:forget-device")
+	app.WaitFor("id:confirm-forget", time.Second)
+	app.Press("id:dialog-cancel")
+	if len(s.devices) != 1 {
+		t.Fatal("cancelling removal forgot the device")
+	}
 }

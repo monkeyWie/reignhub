@@ -17,23 +17,24 @@ import (
 	"net"
 	"sync"
 	"time"
-
-	"github.com/quic-go/quic-go"
 )
 
-const LeaseLane byte = 2 // relay authorization control records share the interactive stream
+const GrantLane byte = 2
 
-const ALPN = "reign-native/1"
+const ALPN = "reign-native/2"
 
 type Endpoint struct {
 	Address    string `json:"address,omitempty"`
 	UDPAddress string `json:"udpAddress,omitempty"`
 	TCPAddress string `json:"tcpAddress,omitempty"`
+	WSS        string `json:"wss,omitempty"`
 	Pin        string `json:"pin"` // Ed25519 public key, base64url.
 }
 
 func (e Endpoint) AddressFor(network string) string {
 	switch network {
+	case "WSS":
+		return e.WSS
 	case "QUIC":
 		if e.UDPAddress != "" {
 			return e.UDPAddress
@@ -86,16 +87,18 @@ type stream interface {
 }
 type Link struct {
 	Network string
+	done    chan struct{}
 	lanes   []stream
 	mu      [2]sync.Mutex
 	once    sync.Once
 	close   func()
 }
 
-func (l *Link) Close() { l.once.Do(l.close) }
+func (l *Link) Done() <-chan struct{} { return l.done }
+func (l *Link) Close()                { l.once.Do(func() { l.close(); close(l.done) }) }
 
 func (l *Link) Send(ctx context.Context, lane byte, body []byte) error {
-	if lane > LeaseLane || len(body) == 0 || len(body) > 32768 {
+	if lane > GrantLane || len(body) == 0 || len(body) > 32768 {
 		return errors.New("invalid native record")
 	}
 	idx := int(lane) % len(l.lanes)
@@ -125,7 +128,7 @@ func (l *Link) read(idx int) (byte, []byte, error) {
 	}
 	size := int(binary.BigEndian.Uint16(header[1:]))
 	lane := header[0]
-	if size == 0 || size > 32768 || lane > LeaseLane || int(lane)%len(l.lanes) != idx {
+	if size == 0 || size > 32768 || lane > GrantLane || int(lane)%len(l.lanes) != idx {
 		return 0, nil, errors.New("invalid native record")
 	}
 	body := make([]byte, size)
@@ -159,64 +162,6 @@ func (l *Link) Receive(fn func(byte, []byte) error) {
 	}
 	workers.Wait()
 }
-func QUICConfig() *quic.Config {
-	return &quic.Config{MaxIncomingStreams: 2, MaxIncomingUniStreams: -1, KeepAlivePeriod: 15 * time.Second, MaxIdleTimeout: 45 * time.Second, DisablePathMTUDiscovery: true}
-}
-func QUICLink(ctx context.Context, c *quic.Conn, accept bool) (*Link, error) {
-	l := &Link{Network: "QUIC", close: func() { _ = c.CloseWithError(0, "") }}
-	d, _ := ctx.Deadline()
-	for i := range 2 {
-		var s *quic.Stream
-		var err error
-		if accept {
-			s, err = c.AcceptStream(ctx)
-		} else {
-			s, err = c.OpenStreamSync(ctx)
-		}
-		if err != nil {
-			l.Close()
-			return nil, err
-		}
-		_ = s.SetDeadline(d)
-		marker := []byte{byte(i)}
-		if accept {
-			_, err = io.ReadFull(s, marker)
-			if marker[0] != byte(i) {
-				err = errors.New("invalid QUIC lane")
-			}
-		} else {
-			_, err = s.Write(marker)
-		}
-		if err != nil {
-			l.Close()
-			return nil, err
-		}
-		_ = s.SetDeadline(time.Time{})
-		l.lanes = append(l.lanes, s)
-	}
-	return l, nil
-}
-
-func Dial(ctx context.Context, endpoint Endpoint, network string) (*Link, error) {
-	address := endpoint.AddressFor(network)
-	if address == "" {
-		return nil, errors.New("native relay transport unavailable")
-	}
-	cfg := ClientTLS(endpoint.Pin)
-	if network == "QUIC" {
-		c, err := quic.DialAddr(ctx, address, cfg, QUICConfig())
-		if err != nil {
-			return nil, err
-		}
-		return QUICLink(ctx, c, false)
-	}
-	d := tls.Dialer{Config: cfg}
-	c, err := d.DialContext(ctx, "tcp", address)
-	if err != nil {
-		return nil, err
-	}
-	return TCPLink(c), nil
-}
 func TCPLink(c net.Conn) *Link {
-	return &Link{Network: "TCP", lanes: []stream{c}, close: func() { _ = c.Close() }}
+	return &Link{done: make(chan struct{}), Network: "TCP", lanes: []stream{c}, close: func() { _ = c.Close() }}
 }

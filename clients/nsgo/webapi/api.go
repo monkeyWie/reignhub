@@ -13,6 +13,7 @@ import (
 	"github.com/monkeyWie/reignhub/clients/nsgo/browserclient"
 	"github.com/monkeyWie/reignhub/internal/connectivity"
 	"github.com/monkeyWie/reignhub/internal/device"
+	"github.com/monkeyWie/reignhub/internal/relay"
 	"github.com/monkeyWie/reignhub/pkg/composerdraft"
 	"github.com/monkeyWie/reignhub/pkg/persistence"
 	"strings"
@@ -40,13 +41,13 @@ type API struct {
 	store                      Storage
 	mu, edit, identity, assets sync.Mutex
 	clients                    map[string]*browserclient.Client
-	busy                       map[string]bool
+	busy                       map[string]context.CancelFunc
 	generation                 map[string]int
 	closed                     bool
 }
 
 func New(s Storage) *API {
-	return &API{store: s, clients: map[string]*browserclient.Client{}, busy: map[string]bool{}, generation: map[string]int{}}
+	return &API{store: s, clients: map[string]*browserclient.Client{}, busy: map[string]context.CancelFunc{}, generation: map[string]int{}}
 }
 func (*API) CanHost() bool { return false }
 func (a *API) Close() {
@@ -54,7 +55,8 @@ func (a *API) Close() {
 	a.closed = true
 	cs := a.clients
 	a.clients = map[string]*browserclient.Client{}
-	for id := range a.busy {
+	for id, stop := range a.busy {
+		stop()
 		a.generation[id]++
 	}
 	a.mu.Unlock()
@@ -74,6 +76,7 @@ func (a *API) list() (any, error) {
 	for _, d := range v {
 		r := clone(d)
 		delete(r, "key")
+		delete(r, "routes")
 		c := a.clients[str(d, "id")]
 		r["path"] = "离线"
 		r["connected"] = false
@@ -145,7 +148,14 @@ func (a *API) connect(ctx context.Context, p Object) (any, error) {
 		name = "Web 浏览器"
 	}
 	connectivity.Report(ctx, "service", "正在连接服务并验证本机身份", connectivity.StageTimeout)
-	i, e := a.loadIdentity(ctx, service, name)
+	var i Object
+	var e error
+	if p["reconnectOnly"] == true {
+		i, e = a.store.LoadIdentity(ctx, service)
+	}
+	if e == nil && i == nil {
+		i, e = a.loadIdentity(ctx, service, name)
+	}
 	if e != nil {
 		return nil, e
 	}
@@ -175,11 +185,14 @@ func (a *API) connect(ctx context.Context, p Object) (any, error) {
 		return nil, errors.New("无效设备信息")
 	}
 	a.mu.Lock()
-	if a.closed || a.busy[id] {
+	if a.closed || a.busy[id] != nil {
 		a.mu.Unlock()
 		return nil, errors.New("正在连接此设备或客户端已关闭")
 	}
-	a.busy[id] = true
+	ctx, stop := context.WithCancel(ctx)
+	defer stop()
+	a.busy[id] = stop
+	a.generation[id]++
 	g := a.generation[id]
 	a.mu.Unlock()
 	defer func() { a.mu.Lock(); delete(a.busy, id); a.mu.Unlock() }()
@@ -250,29 +263,73 @@ func (a *API) connect(ctx context.Context, p Object) (any, error) {
 		s = Object{"id": id, "service": service, "connectionId": d["connectionId"], "name": d["name"], "host": d["id"], "public": d["public"], "key": reply["key"], "expires": reply["expires"]}
 	}
 	connectivity.Note(ctx, "authorize", "authorize", "设备授权已就绪", "", "success")
-	policy := Object{}
-	if p["relayOnly"] != true {
-		connectivity.Report(ctx, "config", "正在获取直连探测配置", connectivity.StageTimeout)
-		entry, _ := a.store.Get("network:" + service)
-		cache := obj(entry)
-		if len(cached) > 0 && num(cache, "at") > time.Now().Add(-10*time.Minute).Unix() {
-			policy = obj(cache["policy"])
-		} else {
-			policy, e = post(ctx, service, "", "/p2p/config", Object{})
-			if e == nil {
-				_ = a.store.Put("network:"+service, Object{"policy": policy, "at": time.Now().Unix()})
-			}
+	deviceID, hostID := str(i, "id"), str(d, "id")
+	var routes relay.Routes
+	raw, _ := json.Marshal(s["routes"])
+	_ = json.Unmarshal(raw, &routes)
+	// A fresh enrollment can arrive on either side of the first verified RPC.
+	// Serialize it with publication, disconnect and forgetting this environment.
+	published := false
+	fetch := func(refresh context.Context) (relay.Routes, error) {
+		result, err := post(refresh, service, token, "/p2p/routes", Object{"host": hostID})
+		var fresh relay.Routes
+		if err != nil {
+			return fresh, err
 		}
-		if e != nil {
-			if ctx.Err() != nil {
-				return nil, ctx.Err()
+		encoded, err := json.Marshal(result)
+		if err == nil {
+			err = json.Unmarshal(encoded, &fresh)
+		}
+		if err != nil {
+			return fresh, err
+		}
+		a.edit.Lock()
+		defer a.edit.Unlock()
+		if !a.current(id, g) || refresh.Err() != nil {
+			return fresh, context.Canceled
+		}
+		s["routes"] = result
+		s["independentRoutes"] = fresh.Node != nil && fresh.Node.WSS != "" && fresh.Node.Device == deviceID && fresh.Node.Host == hostID && fresh.Node.Role == "client"
+		if published {
+			err = a.store.SaveEnvironment(refresh, s)
+		}
+		return fresh, err
+	}
+	pairing := browserclient.Pairing{Relay: strings.Replace(service, "http", "ws", 1), Host: hostID, Key: str(s, "key"), Token: token, RelayOnly: p["relayOnly"] == true}
+	if !pairing.RelayOnly {
+		entry, _ := a.store.Get("network:" + service)
+		policy := obj(obj(entry)["policy"])
+		pairing.ICE = browserclient.STUN(policy)
+		if num(obj(entry), "at") < time.Now().Add(-10*time.Minute).Unix() {
+			ready := make(chan struct{})
+			var refreshed []string
+			// Start discovery alongside dialing. A cold ICE attempt waits briefly for
+			// local STUN settings; independent relay connections never wait for HTTP.
+			go func() {
+				defer close(ready)
+				next, err := post(ctx, service, "", "/p2p/config", Object{})
+				if err == nil {
+					refreshed = browserclient.STUN(next)
+					_ = a.store.Put("network:"+service, Object{"policy": next, "at": time.Now().Unix()})
+				}
+			}()
+			fallback := pairing.ICE
+			pairing.ICEServers = func(setup context.Context) []string {
+				timer := time.NewTimer(time.Second)
+				defer timer.Stop()
+				select {
+				case <-ready:
+					if refreshed != nil {
+						return refreshed
+					}
+				case <-timer.C:
+				case <-setup.Done():
+				}
+				return fallback
 			}
-			connectivity.Note(ctx, "config", "config", "探测配置暂不可用，使用公共 STUN", e.Error(), "warning")
-		} else {
-			connectivity.Note(ctx, "config", "config", "直连探测配置已获取", strings.Join(browserclient.STUN(policy), ", "), "success")
 		}
 	}
-	c, e := browserclient.Connect(ctx, browserclient.Pairing{Relay: strings.Replace(service, "http", "ws", 1), Host: str(d, "id"), Key: str(s, "key"), Token: token, ICE: browserclient.STUN(policy), RelayOnly: p["relayOnly"] == true})
+	c, e := browserclient.ConnectRoutes(ctx, pairing, deviceID, routes, fetch)
 	if e != nil {
 		return nil, e
 	}
@@ -289,6 +346,7 @@ func (a *API) connect(ctx context.Context, p Object) (any, error) {
 	s["relayOnly"] = p["relayOnly"] == true
 	s["reconnectDisabled"] = false
 	e = a.store.SaveEnvironment(ctx, s)
+	published = e == nil
 	if e != nil {
 		a.edit.Unlock()
 		c.Close()
@@ -302,7 +360,11 @@ func (a *API) connect(ctx context.Context, p Object) (any, error) {
 	if old != nil {
 		old.Close()
 	}
-	publishClientInfo(c, i["info"])
+	if info := device.ClientInfoFrom(ctx); info.Name != "" {
+		publishClientInfo(c, info)
+	} else {
+		publishClientInfo(c, i["info"])
+	}
 	return a.list()
 }
 func (a *API) client(id string) *browserclient.Client {
@@ -405,6 +467,9 @@ func (a *API) Call(ctx context.Context, method string, p Object, target string, 
 		a.edit.Lock()
 		a.mu.Lock()
 		a.generation[id]++
+		if stop := a.busy[id]; stop != nil {
+			stop()
+		}
 		c := a.clients[id]
 		delete(a.clients, id)
 		a.mu.Unlock()

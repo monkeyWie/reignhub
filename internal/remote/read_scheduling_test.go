@@ -89,7 +89,7 @@ func TestRelayBusyReadRespondsAndCancellationReleasesHost(t *testing.T) {
 		defer stop()
 		return c.Call(short, control.Request{Method: "network"}, nil) == nil
 	})
-	if c.Path() != "Relay · encrypted" {
+	if c.Path() != "Relay · WebSocket" {
 		t.Fatal("cancelling reads disconnected relay", c.Path())
 	}
 }

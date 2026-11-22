@@ -1,10 +1,12 @@
 package relay
 
 import (
+	"crypto/ed25519"
 	"testing"
 	"time"
 
 	"github.com/monkeyWie/reignhub/internal/nativepath"
+	"github.com/monkeyWie/reignhub/pkg/access"
 )
 
 func TestRelayTransportAddresses(t *testing.T) {
@@ -37,43 +39,48 @@ func TestRelayTransportAddresses(t *testing.T) {
 			}
 		})
 	}
-	for _, entries := range [][]string{nil, {"tcp:" + tcp, shared}, {"udp://relay.example:443"}, {"udp:[invalid]:443"}, {"tcp:relay.example:0"}} {
+	for _, addresses := range [][]string{{"wss://Relay.Example:443/"}, {shared, "wss://relay.example"}} {
+		nodes, err := ResolveNodes([]NodeConfig{{Addresses: addresses, Credential: credential}})
+		if err != nil || nodes[0].WSS != "wss://relay.example/p2p/node" {
+			t.Fatal("incorrect browser relay", err)
+		}
+	}
+	for _, entries := range [][]string{nil, {"wss://user@relay.example"}, {"wss://relay.example/?x=1"}, {"wss://relay.example:65536"}, {"wss://relay.example/a"}, {"wss://a", "wss://b"}, {"tcp:" + tcp, shared}, {"udp://relay.example:443"}, {"udp:[invalid]:443"}, {"tcp:relay.example:0"}} {
 		if _, err := ResolveNodes([]NodeConfig{{Addresses: entries, Credential: credential}}); err == nil {
 			t.Errorf("accepted invalid relay addresses %v", entries)
 		}
 	}
 }
 
-func TestExternalTicketScope(t *testing.T) {
-	key := nativepath.Key([]byte("test"), "first")
-	nodes, err := ResolveNodes([]NodeConfig{{Addresses: []string{"relay.example:26332"}, Credential: Credential(key)}})
+func TestOperatorLeaseChecksDeviceRoleAndExpiry(t *testing.T) {
+	pub, key, err := ed25519.GenerateKey(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	host, gen, peer := ID(), ID(), ID()
-	now := time.Unix(1_800_000_000, 0)
-	until := now.Add(time.Minute)
-	ticket := nodes[0].issue(host, gen, peer, "client", until).Ticket
-	valid := NativeJoin{Host: host, Peer: peer, Role: "client", Ticket: ticket}
-	if got, expiry, ok := verifyTicket(authorizationKey(key), valid, now); !ok || got != gen || !expiry.Equal(until) {
-		t.Fatal("valid ticket lost its generation or expiry")
+	now := time.Now()
+	n := nodeLease{key: pub, namespace: ID(), host: ID(), device: ID(), role: "client", close: func() {}}
+	defer n.stop()
+	g := access.Grant{Namespace: n.namespace, HostID: n.host, DeviceID: n.device, Role: n.role, ID: ID(), Audience: access.Audience, IssuedAt: now.Unix(), ExpiresAt: now.Unix() + 180, Scopes: []string{"connect", "offline", "relay"}}
+	check := func(grant access.Grant, valid bool) {
+		t.Helper()
+		ticket, err := access.Sign(key, grant)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if (n.renew(ticket) == nil) != valid {
+			t.Fatal("incorrect lease admission", grant.Role, grant.Scopes)
+		}
 	}
-	for _, tc := range []struct {
-		name string
-		key  []byte
-		join NativeJoin
-		now  time.Time
-	}{
-		{"wrong node", authorizationKey(nativepath.Key([]byte("test"), "second")), valid, now},
-		{"wrong host", nodes[0].secret, NativeJoin{ID(), peer, "client", ticket}, now},
-		{"wrong peer", nodes[0].secret, NativeJoin{host, ID(), "client", ticket}, now},
-		{"wrong role", nodes[0].secret, NativeJoin{host, peer, "host", ticket}, now},
-		{"expired", nodes[0].secret, valid, until},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if _, _, ok := verifyTicket(tc.key, tc.join, tc.now); ok {
-				t.Fatal("out-of-scope credential accepted")
-			}
-		})
-	}
+	check(g, true)
+	g.Role = "host"
+	check(g, false)
+	g.Role = n.role
+	g.ExpiresAt = 0
+	check(g, false)
+	g.ExpiresAt = now.Unix() + 180
+	g.DeviceID = ID()
+	check(g, false)
+	g.DeviceID = n.device
+	g.Scopes = []string{"connect", "offline"}
+	check(g, false)
 }

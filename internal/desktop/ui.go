@@ -11,6 +11,7 @@ import (
 	"github.com/egoist/mygo/ui"
 	"github.com/monkeyWie/reignhub/internal/app"
 	"github.com/monkeyWie/reignhub/internal/config"
+	"github.com/monkeyWie/reignhub/internal/connectivity"
 	"github.com/monkeyWie/reignhub/internal/control"
 	"github.com/monkeyWie/reignhub/internal/provider"
 	"github.com/monkeyWie/reignhub/internal/remote"
@@ -156,7 +157,7 @@ func (a *window) agents(c *ui.Context) {
 		ui.Row(c).Padding(14).Gap(16).Radius(8).Background(t.Surface).Children(func() {
 			ui.Text(c, fmt.Sprintf("客户端 %d", i+1)).Bold()
 			ui.Text(c, p.ID).FontSize(11).TextColor(t.TextMuted).Grow(1)
-			ui.Text(c, p.Path).FontSize(12).TextColor(t.Accent)
+			ui.Text(c, connectivity.PathLabel(p.Path)).FontSize(12).TextColor(t.Accent)
 		})
 	}
 	ui.Text(c, "这里只显示已经通过配对握手的在线连接。").FontSize(12).TextColor(t.TextMuted)

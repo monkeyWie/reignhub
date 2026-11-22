@@ -38,7 +38,7 @@ def check_probe_mode(executable, work):
         free.bind(('127.0.0.1', 0))
         port = free.getsockname()[1]
     file = work / 'config.json'
-    file.write_text(json.dumps({'services': {'stun': {'listen': f'127.0.0.1:{port}'}}}))
+    file.write_text(json.dumps({'services': {'control': {'enable': False}, 'relay': {'enable': False}, 'stun': {'listen': f'127.0.0.1:{port}'}}}))
     process = subprocess.Popen([str(executable)], cwd=work)
     try:
         deadline = time.monotonic() + 10
@@ -79,7 +79,7 @@ def main():
         config = work / 'config.json'
         initial = config.read_bytes()
         assert json.loads(initial) == bundled_config, 'archive and --init defaults differ'
-        assert bundled_config == {'services': {'control': {}, 'stun': {}, 'relay': {}}}
+        assert bundled_config == {'services': {group: {'enable': True} for group in ('control', 'stun', 'relay')}}
         assert subprocess.run([str(executable), '--init'], cwd=work).returncode != 0
         assert config.read_bytes() == initial and not (work / 'data').exists()
         check_probe_mode(executable, work)

@@ -8,7 +8,7 @@ Your agents and projects run on your computer. The connection service pairs your
 | Where you want to run it                           | What to install                                                                       | What to expose                                                             |
 | -------------------------------------------------- | ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
 | On your own machine or VM                          | [Go server](/docs/self-hosting/go) with its built-in Web console and SQLite           | HTTPS for the console and signaling, TCP and UDP for STUN and native relay |
-| In your Cloudflare account                         | [Worker deployment bundle](/docs/self-hosting/cloudflare) with D1 and Durable Objects | One HTTPS origin, including the encrypted WebSocket relay                  |
+| In your Cloudflare account                         | [Cloudflare Worker](/docs/self-hosting/cloudflare) with D1 and Durable Objects | One HTTPS origin, including the encrypted WebSocket relay                  |
 | With a separate public IP for STUN or native relay | [Additional Go node](/docs/self-hosting/probe) alongside either control service       | Only the TCP and UDP ports you advertise                                   |
 
 ### Connect your devices

@@ -318,6 +318,9 @@ func (s *State) message(cx *core.Scope, get func() Message) core.Node {
 			switch p {
 			case textview.PartRoot, textview.PartParagraph, textview.PartHeading:
 				return core.Style{Color: c.foreground}
+			case textview.PartTable, textview.PartTableScroll:
+				// Constrain the viewport; the Markdown grid keeps its intrinsic column widths.
+				return core.Style{MaxWidth: core.Pct(100), MinWidth: core.Pt(0)}
 			case textview.PartCodeBlock:
 				return core.Style{Background: c.code, BorderWidth: 1, BorderColor: c.border, CornerRadius: 12, Overflow: core.Hidden}
 			case textview.PartCodeBlockAction:
@@ -361,7 +364,10 @@ func (s *State) message(cx *core.Scope, get func() Message) core.Node {
 	if user {
 		bubbleContent = core.View{Style: core.Style{Direction: core.Row, Width: core.Pct(100), MinWidth: core.Pt(0), JustifyContent: core.JustifyEnd}, Children: []core.Node{bubble}}
 	}
-	content = append(content, core.Show{When: func() bool { return strings.TrimSpace(displayText(get())) != "" }, Then: func(*core.Scope) core.Node { return bubbleContent }})
+	content = append(content, core.Show{When: func() bool { return strings.TrimSpace(displayText(get())) != "" }, Then: func(cx *core.Scope) core.Node {
+		messageOverflow.Provide(cx, true)
+		return bubbleContent
+	}})
 	content = append(content, s.attachmentGallery(cx, get))
 	delivery := core.Show{When: func() bool { return get().Delivery != "" }, Then: func(cx *core.Scope) core.Node {
 		return core.View{TestID: "delivery-" + m.ID, Tooltip: tooltipCard(cx, dynamicText(cx, func() string { return get().DeliveryError }, 12, false)), Style: core.Style{JustifyContent: core.JustifyCenter}, Children: []core.Node{core.Show{When: func() bool { return get().Delivery == "sending" }, Then: func(*core.Scope) core.Node {
@@ -411,7 +417,7 @@ func (s *State) activity(cx *core.Scope, get func() Message) core.Node {
 	open := core.NewSignal(cx, false)
 	hover := core.NewSignal(cx, false)
 	tools := func() []Object { return get().Tools }
-	title := func() string { return activityLabel(tools()) }
+	title := func() string { return activityLabel(get()) }
 	color := func() core.Color {
 		if hover.Get() {
 			return palette(cx).foreground
@@ -422,7 +428,7 @@ func (s *State) activity(cx *core.Scope, get func() Message) core.Node {
 	return core.View{TestID: "tool-group", Style: core.Style{Padding: core.Edges{Top: 10, Bottom: 10}, Gap: 8}, Children: []core.Node{core.View{TestID: "tool-group-toggle", Role: core.RoleButton, LabelFunc: title, OnMouseEnter: func(core.MouseEvent) { hover.Set(true) }, OnMouseLeave: func(core.MouseEvent) { hover.Set(false) }, OnPress: func(core.PressEvent) { open.Set(!open.Get()) }, Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 9, Padding: core.Symmetric(8, 0), CornerRadius: 8}, StyleFunc: func() core.Style {
 		return core.Style{Active: &core.Style{Opacity: core.Alpha(.65)}, FocusVisible: &core.Style{OutlineWidth: 2, OutlineColor: palette(cx).focus}}
 	}, Children: []core.Node{icon, core.Show{When: func() bool { return get().Live && s.connected() }, Then: func(*core.Scope) core.Node { return chat.Shimmer{Text: title, Size: 12, Color: color} }, Else: func(cx *core.Scope) core.Node {
-		text := dynamicText(cx, title, 12, true)
+		text := singleLine(cx, title, 12, true)
 		text.StyleFunc = func() core.Style { return core.Style{Color: color()} }
 		return text
 	}}, core.Show{When: open.Get, Then: func(cx *core.Scope) core.Node { return glyph(cx, lucide.ChevronUp, 12) }}}}, core.Show{When: open.Get, Then: func(cx *core.Scope) core.Node {
@@ -438,8 +444,12 @@ func (s *State) activity(cx *core.Scope, get func() Message) core.Node {
 				acts := objects(t["activities"])
 				parts := []core.Node{}
 				for _, a := range acts {
-					parts = append(parts, row(glyph(cx, lucide.Wrench, 13), label(cx, str(a, "title"), 12, true)))
-					if d := str(a, "detail"); d != "" {
+					title, d := str(a, "title"), str(a, "detail")
+					if str(a, "kind") == "command" && d != "" {
+						title = "运行命令"
+					}
+					parts = append(parts, row(glyph(cx, lucide.Wrench, 13), label(cx, title, 12, true)))
+					if d != "" {
 						parts = append(parts, label(cx, d, 11, true))
 					}
 				}

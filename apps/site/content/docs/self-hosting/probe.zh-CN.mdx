@@ -5,7 +5,7 @@ description: 在一个公网 IP 上提供 TCP、UDP 探测和可选的 QUIC、TC
 
 ## 什么时候需要
 
-Worker 不能直接监听原始 UDP／TCP 探测 Socket。默认可以使用公共 UDP STUN；如果希望补充自己的候选地址发现、提高公共探测服务不可达时的覆盖，可在有公网地址的服务器将 `config.json` 设为 `{"services":{"stun":{}}}` 并启动服务。
+Worker 不能直接监听原始 UDP／TCP 探测 Socket。默认可以使用公共 UDP STUN；如果希望补充自己的候选地址发现、提高公共探测服务不可达时的覆盖，可在有公网地址的服务器将 `config.json` 设为 `{"services":{"control":{"enable":false},"relay":{"enable":false}}}` 并启动服务。
 
 探测器只返回地址映射，不保存设备目录、不运行 Agent、不托管网页，也不是业务中继。没有它也可以部署 Worker。
 
@@ -15,7 +15,7 @@ Go 版本以仓库 `go.mod` 为准，也可以使用对应平台的 Go 服务发
 
 ```sh
 go build -o reignhub-server ./cmd/reignhub-server
-# 将 config.json 设为 {"services":{"stun":{}}} 后启动。
+# 将 config.json 设为 {"services":{"control":{"enable":false},"relay":{"enable":false}}} 后启动。
 ./reignhub-server
 ```
 
@@ -46,7 +46,7 @@ EXTERNAL_STUN=["probe.example.com:26331"]
 
 ```json
 {
-  "services": { "stun": {}, "relay": {} }
+  "services": { "control": { "enable": false } }
 }
 ```
 
@@ -55,14 +55,18 @@ EXTERNAL_STUN=["probe.example.com:26331"]
 ./reignhub-server --print-relay-credential
 ```
 
-中继另需放行 26332 的 UDP 和 TCP。保留节点数据库，重启或升级后仍可使用同一份凭据。在 Worker 控制台新建名为 `EXTERNAL_RELAYS` 的 **Secret**，将下面数组中的地址和凭据换成自己的再粘贴。用 Wrangler 部署时，运行 `pnpm exec wrangler secret put EXTERNAL_RELAYS`，按提示粘贴即可。Go 中控在 `services.control.externalRelays` 填相同的数组，并限制配置文件的读取权限。客户端只收到用于校验中继身份的公钥指纹和短期连接票据。
+中继另需放行 26332 的 UDP 和 TCP。保留节点数据库，重启或升级后仍可使用同一份凭据。在 Worker 控制台新建名为 `EXTERNAL_RELAYS` 的 **Secret**，将下面数组中的地址和凭据换成自己的再粘贴。用 Wrangler 部署时，运行 `pnpm exec wrangler secret put EXTERNAL_RELAYS`，按提示粘贴即可。Go 中控在 `services.control.externalRelays` 填相同的数组，并限制配置文件的读取权限。配对后，原生控制端和被控端分别保存节点公钥与自己的接入凭据。中控离线时，双方仍可在这个节点会合。
 
 ```json
-[{ "addresses": ["203.0.113.10:26332"], "credential": "替换成命令输出的节点凭据" }]
+[{ "addresses": ["203.0.113.10:26332","wss://relay.example.com"], "credential": "替换成命令输出的节点凭据" }]
 ```
+
+浏览器使用数组里的 `wss://` 域名。让 Caddy 或 Nginx 在该域名终止 HTTPS，并将 WebSocket 升级请求转发到 Go 的 26330/TCP。中控会自动补上 `/p2p/node`。同一个节点的 WSS、UDP 和 TCP 共用一份凭据。只提供 WSS 时，数组里只填这个域名，并将 `services.relay.native.enable` 设为 `false`。被控端和已配对的控制端都能访问节点时，中控离线后仍可重连。
 
 多台中继各加一项。共用地址写一次即可。分端口时填 `["udp:probe.example.com:3478","tcp:probe.example.com:3479"]`。Go 与 Worker 都对 STUN 和每个中继的 `addresses` 数组使用这套规则，同一中继只需一份节点凭据。配置修改后重新部署 Worker 或重启 Go 中控。
 
 ## 运行边界
 
 对称 NAT、运营商网络及企业防火墙可能仍无法打洞；增加探测器并不保证所有网络都能直连。直连不可用时，Worker 的加密 WebSocket 中继提供备用路径。
+
+要在节点上撤销某台设备的中继使用权，将该设备的 32 位设备 ID 加入 config.json 的 `services.relay.revokedDevices`。运行中的节点每两秒读取一次撤销列表，主动断开该设备的连接。

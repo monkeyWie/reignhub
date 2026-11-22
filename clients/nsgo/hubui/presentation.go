@@ -37,13 +37,14 @@ func visibleTool(item Object) bool {
 	}
 	return str(item, "role") == "tool"
 }
-func activityLabel(tools []Object) string {
+func activityLabel(m Message) string {
 	labels := map[string]string{"read": "读取文件", "list": "列出目录", "search": "搜索", "command": "运行命令", "edit": "编辑文件", "web": "浏览网页", "tool": "调用工具", "agent": "子 Agent", "image": "图片", "plan": "更新计划"}
 	counts := map[string]int{}
 	order := []string{}
 	running := ""
-	for _, tool := range tools {
+	for _, tool := range m.Tools {
 		acts := objects(tool["activities"])
+		live := m.Live && len(acts) > 0 && str(tool, "status") == "inProgress"
 		if len(acts) == 0 {
 			acts = []Object{{"kind": "tool", "title": "执行工具 " + str(tool, "type")}}
 		}
@@ -53,8 +54,14 @@ func activityLabel(tools []Object) string {
 				order = append(order, kind)
 			}
 			counts[kind]++
-			if len(objects(tool["activities"])) > 0 && str(tool, "status") == "inProgress" {
-				running = "正在" + str(a, "title")
+			if live {
+				title := str(a, "title")
+				if kind == "command" || title == "" || len(title) > 120 || strings.ContainsAny(title, "\r\n\u2028\u2029") {
+					title = labels[kind]
+				}
+				if title != "" {
+					running = "正在" + title
+				}
 			}
 		}
 	}

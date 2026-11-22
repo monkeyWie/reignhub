@@ -20,7 +20,7 @@ func (w *wire) detachSignal(status *HostStatus) {
 		tick := time.NewTicker(time.Second)
 		defer tick.Stop()
 		defer w.close()
-		defer status.track(w.peer, nil)
+		defer status.remove(w.peer, w)
 		var lost time.Time
 		for {
 			select {

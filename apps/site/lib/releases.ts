@@ -119,19 +119,6 @@ export function parseReleases(value: unknown): ReleaseVersion | null {
         }
         continue;
       }
-      if (
-        a.name === `reignhub-web-worker-${version}.tar.gz` ||
-        a.name === `reignhub-server-packaging-${version}.tar.gz`
-      ) {
-        hostingAssets.push({
-          name: a.name,
-          url,
-          label: a.name.startsWith("reignhub-web")
-            ? "Cloudflare Worker"
-            : "Homebrew / Scoop",
-        });
-        continue;
-      }
       const prefix = `reignhub-${version}-`;
       if (!a.name.startsWith(prefix)) continue;
       const suffix = a.name.slice(prefix.length);

@@ -143,7 +143,7 @@ try {
     config,
   ).connect();
   if (process.argv[3] === "--go-server")
-    assert.equal(client.path, "Relay · encrypted");
+    assert.equal(client.path, "Relay · WebSocket");
   const providers = await client.call<{ id: string }[]>({
     method: "providers",
   });

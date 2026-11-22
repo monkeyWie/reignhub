@@ -61,13 +61,13 @@ docker compose -f deploy/service/compose.yaml up -d --build
 # Or extract a reignhub-server release archive and run ./reignhub-server
 ```
 
-Go uses local SQLite, embeds `/chat`, and listens on HTTP 26330 plus TCP/UDP discovery 26331 and native QUIC/TLS relay 26332. All addresses and features are configured in `config.json`. It has no Cloudflare dependency. Both Go and Worker roots redirect to `/chat/`. Neither self-hosted package includes the marketing website or docs. See [Go configuration and package-manager installation](deploy/service/README.md).
+Go uses local SQLite, embeds `/chat`, and listens on HTTP 26330 plus TCP/UDP discovery 26331 and native QUIC/TLS relay 26332. All addresses and features are configured in `config.json`. It has no Cloudflare dependency. Both Go and Worker roots redirect to `/chat/`. Neither self-hosted package includes the marketing website or docs. See [Go configuration and installation](deploy/service/README.md).
 
 For a Worker deployment, the same server can run only TCP/UDP discovery (no HTTP or SQLite):
 
 ```sh
 go build -o reignhub-server ./cmd/reignhub-server
-# Set config.json to {"services":{"stun":{}}} before starting.
+# Set config.json to {"services":{"control":{"enable":false},"relay":{"enable":false}}} before starting.
 ./reignhub-server
 ```
 

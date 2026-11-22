@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/monkeyWie/reignhub/clients/nsgo/hubui/locales"
+	"github.com/monkeyWie/reignhub/internal/connectivity"
 	"github.com/nsgo-dev/nsgo/base"
 	"github.com/nsgo-dev/nsgo/core"
 	"github.com/nsgo-dev/nsgo/icons/lucide"
@@ -114,5 +115,5 @@ func deviceStatus(d Object) string {
 	if path == "" {
 		return "已连接 · 正在协商连接路径"
 	}
-	return path
+	return connectivity.PathLabel(path)
 }

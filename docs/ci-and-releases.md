@@ -22,15 +22,13 @@ Linux 和 macOS 分别运行两个 Go module 的 `go vet`、`go test -race` 与�
 | Android arm64                                  | 含原生 QR host 的 APK                                                                        |
 | iOS                                            | `-unsigned.ipa`，需自行签名才能安装                                                          |
 | iOS Simulator                                  | 编译验证，不作为设备安装包发布                                                               |
-| Web + Worker                                   | `reignhub-web-worker-<version>.tar.gz`，仅控制台和开源服务，不含官网/文档                    |
 | Go 服务 Linux / macOS / Windows，amd64 / arm64 | `reignhub-server-<version>-<os>-<arch>.tar.gz`（Windows 为 ZIP），含 Web、SQLite、中继和探测 |
-| 包管理配置                                     | `reignhub-server-packaging-<version>.tar.gz`，Homebrew/Scoop 配方、校验和与安装脚本          |
 
-PR 和 main 构建的产物在对应 Actions run 的 Artifacts 中，保留 14 天；覆盖率保留 7 天。每次完整构建都会把公开产物合并到 `release-bundle` artifact，验证 20 个预期安装包/归档及各自 `.sha256`，生成总 `SHA256SUMS`；tag 发布直接使用这一份已验证的产物。缺失、额外文件或校验和错误都会阻止发布。
+PR 和 main 构建的产物在对应 Actions run 的 Artifacts 中，保留 14 天；覆盖率保留 7 天。每次完整构建都会把公开产物合并到 `release-bundle` artifact，验证 12 个客户端安装包和 6 个服务端归档及其 SHA-256。发布任务按验证清单上传这 18 个文件，GitHub 为每个附件提供 SHA-256。缺失、额外文件或校验和错误都会阻止发布。
 
-Go server job 复用已通过检查的 Worker 归档内 Web 资产，交叉编译六个平台，生成真实 URL/校验和的 Homebrew/Scoop 定义，并通过随机端口验证打包二进制的 Web 分片、SQLite、TCP/UDP，以及 TypeScript 控制端到隔离 Go Agent 的加密中继互通。另构建并启动非 root、根文件系统只读的 Docker 服务，验证同样的加密客户端互通。构建不会自动发布 Homebrew tap、Scoop bucket 或容器镜像。
+Go server job 复用 Web job 上传的控制台静态资源，交叉编译六个平台，并通过随机端口验证打包二进制的 Web 分片、SQLite、TCP/UDP，以及 TypeScript 控制端到隔离 Go Agent 的加密中继互通。另构建并启动非 root、根文件系统只读的 Docker 服务，验证同样的加密客户端互通。
 
-Web job 只构建 NSGo Web 和独立开源 Worker，并使用迁移后的本地 D1 验证原生客户端互通、根路径跳转、分片资源与官网路径 404。官网由独立的 `site.yml` 工作流使用 `pnpm build:site` 构建、验证；仅官方仓库开启 `REIGNHUB_DEPLOY_OFFICIAL_SITE=true` 并配置 Cloudflare secrets 后发布，不进入开源归档。同一个 Linux amd64 服务程序读取 `{"services":{"stun":{}}}` 的 JSON 配置并在随机本地端口启动，验证 TCP/UDP 探测，不承载 Web 或账号服务。
+Web job 只构建 NSGo Web 和独立开源 Worker，并使用迁移后的本地 D1 验证原生客户端互通、根路径跳转、分片资源与官网路径 404。官网由独立的 `site.yml` 工作流使用 `pnpm build:site` 构建、验证；仅官方仓库开启 `REIGNHUB_DEPLOY_OFFICIAL_SITE=true` 并配置 Cloudflare secrets 后发布，不进入开源归档。同一个 Linux amd64 服务程序读取 `{"services":{"control":{"enable":false},"relay":{"enable":false}}}` 的 JSON 配置并在随机本地端口启动，验证 TCP/UDP 探测，不承载 Web 或账号服务。
 
 ## 配置（均可选）
 

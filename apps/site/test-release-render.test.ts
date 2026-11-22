@@ -31,8 +31,6 @@ filenames.push(
         `reignhub-server-1.2.3-${os}-${arch}.${os === "windows" ? "zip" : "tar.gz"}`,
     ),
   ),
-  "reignhub-web-worker-1.2.3.tar.gz",
-  "reignhub-server-packaging-1.2.3.tar.gz",
 );
 const catalog: ReleaseCatalog = {
   release: parseReleases([
@@ -41,7 +39,11 @@ const catalog: ReleaseCatalog = {
       draft: false,
       prerelease: false,
       published_at: "2026-11-14T00:00:00Z",
-      assets: filenames.map((name) => ({
+      assets: [
+        ...filenames,
+        "reignhub-web-worker-1.2.3.tar.gz",
+        "reignhub-server-packaging-1.2.3.tar.gz",
+      ].map((name) => ({
         name,
         size: 9 * 1024 * 1024,
         browser_download_url: `${releasesURL}/download/${tag}/${name}`,
@@ -63,6 +65,7 @@ test("English and Chinese download HTML includes every native link before JavaSc
     assert.doesNotMatch(html, /9\.4 MB/);
     for (const name of filenames)
       assert.ok(html.includes(`href="${releasesURL}/download/${tag}/${name}"`));
+    assert.doesNotMatch(html, /reignhub-web-worker|reignhub-server-packaging/);
     assert.doesNotMatch(html, /正在获取|正在加载|Loading|Fetching|aria-busy/);
   }
 });

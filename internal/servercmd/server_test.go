@@ -70,10 +70,10 @@ func TestConfigFileLifecycle(t *testing.T) {
 		t.Fatal("changed existing config")
 	}
 	c, err = loadConfig(file)
-	if err != nil || !c.Control || c.TCPSTUNListen != "" || c.STUNListen != "[::1]:40001" || c.Web != filepath.Join(filepath.Dir(file), "console") || c.TLSKey != filepath.Join(filepath.Dir(file), "key") {
+	if err != nil || !c.Control || c.TCPSTUNListen != ":26331" || c.STUNListen != "[::1]:40001" || c.Web != filepath.Join(filepath.Dir(file), "console") || c.TLSKey != filepath.Join(filepath.Dir(file), "key") {
 		t.Fatal(c, err)
 	}
-	for _, value := range []string{`{"typo":true}`, `null`, `{}` + " {}", `{"relay":true,"signal":false}`, `{"services":{"relay":{"controlUrl":"http://remote.example"}}}`, `{}` + strings.Repeat(" ", 1<<20), `{"services":{}}`, `{"services":null}`, `{"services":{"control":{"stunServers":null}}}`, `{"services":{"control":{"stunServers":["bad"]}}}`, `{"services":{"control":{"signal":false}}}`} {
+	for _, value := range []string{`{"typo":true}`, `null`, `{}` + " {}", `{"relay":true,"signal":false}`, `{"services":{"relay":{"controlUrl":"http://remote.example"}}}`, `{}` + strings.Repeat(" ", 1<<20), `{"services":{"control":{"enable":false},"stun":{"enable":false},"relay":{"enable":false}}}`, `{"services":{"stun":{"enable":"false"}}}`, `{"services":{"relay":{"enable":null}}}`, `{"services":null}`, `{"services":{"control":{"stunServers":null}}}`, `{"services":{"control":{"stunServers":["bad"]}}}`, `{"services":{"control":{"signal":false}}}`} {
 		if err := os.WriteFile(file, []byte(value), 0600); err != nil {
 			t.Fatal(err)
 		}
@@ -128,7 +128,7 @@ func checkProbes(t *testing.T, r *Runtime) {
 func fmtPort(port int) string { return strconv.Itoa(port) }
 func TestProbeOnlyDoesNotCreateDatabase(t *testing.T) {
 	c := testConfig(t)
-	c.Control, c.NativeListen = false, ""
+	c.Control, c.WebSocket, c.NativeListen = false, false, ""
 	r, err := Start(c)
 	if err != nil {
 		t.Fatal(err)
@@ -250,13 +250,17 @@ func TestConfiguredListenersAndRoutes(t *testing.T) {
 		name, services                       string
 		control, udp, tcp, native, websocket bool
 	}{
-		{"control only", `{"control":{}}`, true, false, false, false, false},
-		{"dual STUN", `{"stun":{}}`, false, true, true, false, false},
-		{"UDP only", `{"stun":{"udp":{}}}`, false, true, false, false, false},
-		{"TCP only", `{"stun":{"tcp":{}}}`, false, false, true, false, false},
-		{"local native", `{"control":{},"relay":{"native":{}}}`, true, false, false, true, false},
-		{"local WebSocket", `{"control":{},"relay":{"websocket":true}}`, true, false, false, false, true},
-		{"node", `{"stun":{},"relay":{}}`, false, true, true, true, false},
+		{"defaults", `{}`, true, true, true, true, true},
+		{"explicit defaults", `{"control":{"enable":true},"stun":{},"relay":{}}`, true, true, true, true, true},
+		{"control only", `{"stun":{"enable":false},"relay":{"enable":false}}`, true, false, false, false, false},
+		{"dual STUN", `{"control":{"enable":false},"relay":{"enable":false}}`, false, true, true, false, false},
+		{"UDP only", `{"control":{"enable":false},"stun":{"tcp":{"enable":false}},"relay":{"enable":false}}`, false, true, false, false, false},
+		{"TCP only", `{"control":{"enable":false},"stun":{"udp":{"enable":false}},"relay":{"enable":false}}`, false, false, true, false, false},
+		{"local native", `{"stun":{"enable":false},"relay":{"websocket":false}}`, true, false, false, true, false},
+		{"local WebSocket", `{"stun":{"enable":false},"relay":{"native":{"enable":false}}}`, true, false, false, false, true},
+		{"node", `{"control":{"enable":false}}`, false, true, true, true, true},
+		{"WSS only", `{"control":{"enable":false},"stun":{"enable":false},"relay":{"native":{"enable":false}}}`, false, false, false, false, true},
+		{"disabled group wins", `{"stun":{"enable":false,"udp":{"enable":true}},"relay":{"enable":false,"websocket":true}}`, true, false, false, false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c := readTestConfig(t, tc.services)
@@ -270,17 +274,17 @@ func TestConfiguredListenersAndRoutes(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer r.Close()
-			if (r.HTTPAddr != nil) != tc.control || (r.UDPAddr != nil) != tc.udp || (r.TCPAddr != nil) != tc.tcp || (r.native != nil) != tc.native {
+			if (r.HTTPAddr != nil) != (tc.control || tc.websocket) || (r.UDPAddr != nil) != tc.udp || (r.TCPAddr != nil) != tc.tcp || (r.native != nil) != tc.native {
 				t.Fatal("unexpected listeners", r.HTTPAddr, r.UDPAddr, r.TCPAddr)
 			}
 			_, err = os.Stat(c.State)
-			if (tc.control || tc.native) != (err == nil) {
+			if (tc.control || tc.native || tc.websocket) != (err == nil) {
 				t.Fatal("unexpected database", err)
 			}
-			if !tc.control {
+			if r.HTTPAddr == nil {
 				return
 			}
-			for path, available := range map[string]bool{"/healthz": true, "/chat/": true, "/api/account": true, "/p2p/config": true, "/p2p/signal": true, "/p2p/relay": tc.websocket} {
+			for path, available := range map[string]bool{"/healthz": true, "/chat/": tc.control, "/api/account": tc.control, "/p2p/config": tc.control, "/p2p/signal": tc.control, "/p2p/relay": tc.control && tc.websocket, "/p2p/node": tc.websocket} {
 				res, err := http.Get("http://" + r.HTTPAddr.String() + path)
 				if err != nil {
 					t.Fatal(err)
@@ -303,7 +307,7 @@ func TestControlSTUNServers(t *testing.T) {
 		{`{"stunServers":[]}`, []string{}, nil},
 		{`{"stunServers":["udp:stun.cloudflare.com:3478","probe.example:26331","tcp:[::1]:3479","probe.example:26331"]}`, []string{"stun:probe.example:26331"}, []string{"probe.example:26331", "[::1]:3479"}},
 	} {
-		c := readTestConfig(t, `{"control":`+tc.control+`}`)
+		c := readTestConfig(t, `{"stun":{"enable":false},"relay":{"enable":false},"control":`+tc.control+`}`)
 		c.Listen = "127.0.0.1:0"
 		r, err := Start(c)
 		if err != nil {

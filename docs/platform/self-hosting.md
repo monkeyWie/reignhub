@@ -12,7 +12,7 @@ docker compose -f deploy/service/compose.yaml up -d --build
 
 All features are enabled by default: device registration, pairing, signaling, encrypted relay, Web, UDP STUN and TCP STUN. HTTP defaults to `:26330`; TCP/UDP discovery defaults to `:26331`. Native relay uses `:26332` on UDP and TCP. SQLite defaults to `data/reignhub.db`. Edit the bundled `config.json` and restart to change listeners or services. For a binary-only installation, create the template once with `--init`. Preserve the database and signing identity on upgrades.
 
-For a Worker probe only, use `{"services":{"stun":{}}}` as the Go configuration. This mode opens no HTTP listener and no SQLite database. TCP and UDP ports can differ. Release packages include verified Homebrew/Scoop definitions; their tap/bucket publication is a separate maintainer step. See [Go deployment, HTTPS, systemd and package managers](../../deploy/service/README.md).
+For a Worker probe only, use `{"services":{"control":{"enable":false},"relay":{"enable":false}}}` as the Go configuration. This mode opens no HTTP listener and no SQLite database. TCP and UDP ports can differ. See [Go deployment, HTTPS and systemd](../../deploy/service/README.md).
 
 Browser crypto requires HTTPS or localhost; LAN HTTP origins are suitable for native testing, not arbitrary remote browsers. STUN sockets require direct reachability and cannot be carried by an HTTP reverse proxy.
 
@@ -46,7 +46,7 @@ For a local Worker, apply migrations with `--local` before `wrangler dev`. Do no
 
 ```sh
 go build -o reignhub-server ./cmd/reignhub-server
-# Set config.json to {"services":{"stun":{}}} before starting.
+# Set config.json to {"services":{"control":{"enable":false},"relay":{"enable":false}}} before starting.
 ./reignhub-server
 ```
 
@@ -67,7 +67,7 @@ No probe means LAN/IPv6 and public UDP STUN still work. Native public TCP discov
 Both open-source control services can advertise static nodes. On each external Go machine, enable the required services in the node's `config.json` and start the node. Run the second command in another shell from the same directory.
 
 ```json
-{"services":{"stun":{},"relay":{}}}
+{"services":{"control":{"enable":false}}}
 ```
 
 ```sh
@@ -75,17 +75,19 @@ Both open-source control services can advertise static nodes. On each external G
 ./reignhub-server --print-relay-credential
 ```
 
-Keep the node's state file on a persistent volume. Allow inbound TCP and UDP on 26331 for STUN and 26332 for native relay. The node credential contains the public TLS pin and the secret key the control service uses to issue short-lived relay tickets. Each node verifies tickets locally and closes a connection when either device’s ticket expires. Clients need direct access to the node's IP or DNS-only hostname. A STUN-only node can use `{"services":{"stun":{}}}` and needs only its advertised address.
+Keep the node's state file on a persistent volume. Allow inbound TCP and UDP on 26331 for STUN and 26332 for native relay. The node credential contains the public TLS pin and the secret used to derive each device’s scoped relay membership key. Paired native devices authenticate directly to their assigned node after a restart. To revoke node usage for a device, add its device ID to `services.relay.revokedDevices` in config.json. The running node rereads this list every two seconds and closes matching connections. Clients need direct access to the node's IP or DNS-only hostname. A STUN-only node can use `{"services":{"control":{"enable":false},"relay":{"enable":false}}}` and needs only its advertised address.
 
-**Go control service.** This configuration runs control and publishes an external STUN and native relay node. Replace the example address and credential, restrict read access to the file and restart the server. Include the `stun` or `relay` groups alongside `control` to run those services locally as well.
+**Go control service.** This configuration runs control and publishes an external STUN and native relay node. Replace the example address and credential, restrict read access to the file and restart the server. Local STUN and relay are disabled explicitly here.
 
 ```json
 {
   "services": {
+    "stun": { "enable": false },
+    "relay": { "enable": false },
     "control": {
       "stunServers": ["203.0.113.10:26331"],
       "externalRelays": [
-        { "addresses": ["203.0.113.10:26332"], "credential": "REPLACE_WITH_NODE_CREDENTIAL" }
+        { "addresses": ["203.0.113.10:26332","wss://relay.example.com"], "credential": "REPLACE_WITH_NODE_CREDENTIAL" }
       ]
     }
   }
@@ -95,14 +97,14 @@ Keep the node's state file on a persistent volume. Allow inbound TCP and UDP on 
 **Cloudflare Worker control service.** Set `EXTERNAL_STUN` in Wrangler’s `vars` to `["203.0.113.10:26331"]`. Store the relay registration separately as a Worker **Secret**. Run `pnpm exec wrangler secret put EXTERNAL_RELAYS` and paste this JSON at the prompt, substituting the real address and credential.
 
 ```json
-[{ "addresses": ["203.0.113.10:26332"], "credential": "REPLACE_WITH_NODE_CREDENTIAL" }]
+[{ "addresses": ["203.0.113.10:26332","wss://relay.example.com"], "credential": "REPLACE_WITH_NODE_CREDENTIAL" }]
 ```
 
 List public and private STUN providers together. Entries extend the three built-in UDP nodes. Omit this list or use `[]` for zero additions. A Go control service also publishes its own enabled STUN listeners. Prefix a single-transport endpoint with `udp:` or `tcp:`. A bare address advertises both transports. Use brackets for IPv6, for example `tcp:[2001:db8::1]:26331`.
 
-For example, a Go relay can listen on port 26332 internally and expose UDP 26332 and TCP 443 via NAT. Register `{"addresses":["udp:203.0.113.10:26332","tcp:203.0.113.10:443"],"credential":"REPLACE_WITH_NODE_CREDENTIAL"}` on either control. Protocol-specific relay addresses require native clients that support split endpoints. Shared addresses use the original signal welcome format.
+For example, a Go relay can listen on port 26332 internally and expose UDP 26332 and TCP 443 via NAT. Register `{"addresses":["udp:203.0.113.10:26332","tcp:203.0.113.10:443"],"credential":"REPLACE_WITH_NODE_CREDENTIAL"}` on either control. Protocol-specific relay addresses require native clients that support split endpoints. A shared entry applies to both transports.
 
-Each control service supports up to 32 static external relays. With multiple entries, the host ID determines one node for both legs. Go includes its enabled local listener as one additional choice. A native connection can fall back to an enabled WebSocket relay when the selected node is unreachable. Browsers use WebRTC and WebSocket. Check STUN entries with `GET /p2p/config` and look for `Relay · QUIC` or `Relay · TCP` on a native connection using the relay.
+Each control service supports up to 32 static external relays. With multiple entries, the host ID determines one node for both legs. Go includes its enabled local listener as one additional choice. A native connection can fall back to an enabled WebSocket relay when the selected node is unreachable. Browsers race WebRTC, the control WebSocket relay and the assigned external WSS endpoint. Forward HTTPS WebSocket upgrades to port 26330 on the Go node and use the public WSS origin in its address list. The independent node endpoint is available with `control.enable` set to either value. Check STUN entries with `GET /p2p/config` and look for `Relay · QUIC` or `Relay · TCP` on a native connection using the relay.
 
 ## Persistence and privacy
 

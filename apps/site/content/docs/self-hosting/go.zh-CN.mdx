@@ -5,7 +5,7 @@ description: 一个独立二进制，内置 SQLite、Web、信令、中继和 TC
 
 ## 下载和启动
 
-从[服务端下载](/zh-CN/download#server)选择与你的系统和 CPU 匹配的 `reignhub-server` 压缩包。对照同一版本的 `SHA256SUMS` 校验，解压后进入包含程序和 `config.json` 的目录。程序内置 Web 控制台。
+从[服务端下载](/zh-CN/download#server)选择与你的系统和 CPU 匹配的 `reignhub-server` 压缩包。对照 GitHub Releases 中该文件的 SHA-256 校验，解压后进入包含程序和 `config.json` 的目录。程序内置 Web 控制台。
 
 ```sh
 ./reignhub-server --version
@@ -24,19 +24,21 @@ docker compose -f deploy/service/compose.yaml up -d --build
 
 服务从当前工作目录读取 `config.json`。解压包已附带模板。单独安装二进制时，在服务目录执行一次 `reignhub-server --init` 生成模板，编辑后运行 `reignhub-server`。已有配置会保留。也可以用 `--config PATH` 指定其他文件。数据库、Web 目录和 TLS 文件的相对路径以配置文件所在目录为准。
 
-默认配置包含三个服务组。`control` 提供设备目录、配对、信令和 Web 控制台，`stun` 提供地址探测，`relay` 提供中继。指定服务组时，只启动列出的组。下面这份配置只开 TCP 和 UDP 探测，监听所有网卡的 3478 端口。
+三个服务组默认都启用。如果用 Worker 做中控，Go 节点只提供 STUN 和中继，可使用这份 `config.json`。
 
 ```json
 {
-  "services": { "stun": { "listen": ":3478" } }
+  "services": { "control": { "enable": false } }
 }
 ```
+
+禁用本地中控后，26330 仍提供独立的 WebSocket 中继。Worker 可以用 `EXTERNAL_RELAYS` 登记此节点的 WSS 域名。
+
+从 RC.2 升级时，把原来靠省略来关闭的服务显式设为 `enable: false`。STUN 默认使用 26331，原生中继使用 26332，两个端口均同时监听 UDP 和 TCP。
 
 修改后重启 Go 服务。中控可以用 `services.control.stunServers` 在内置的 Cloudflare、Google 和哔哩哔哩（`stun.chat.bilibili.com:3478`）UDP 节点之外追加探测节点，用 `services.control.externalRelays` 登记外部中继的地址和节点凭据。
 
 ## 安装与升级
-
-发布时的 packaging 归档包含带真实下载地址和校验和的 Homebrew、Scoop 配方。Homebrew 要求配方放在 tap 内：先运行 `brew tap-new reignhub/local`，把 `Formula/reignhub-server.rb` 复制到 `$(brew --repository reignhub/local)/Formula/`，再执行 `brew install reignhub/local/reignhub-server`。Windows 可用 `scoop install ./bucket/reignhub-server.json`。Homebrew 支持 `brew services start reignhub-server`。简短的 tap 安装命令还需要单独发布包仓库，源码构建不会自动注册。
 
 Linux 可使用源码仓库 `deploy/service/` 目录中的 systemd 服务文件。升级时保留 SQLite；复制备份前先停止服务并一并保留 WAL/SHM，或使用 SQLite 备份功能。数据库包含固定的服务 ID、签名密钥、设备元数据、凭据哈希与配对权限，不保存聊天明文。重启后检查 `/healthz`、`/p2p/config` 和实际配对连接。
 

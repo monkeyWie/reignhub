@@ -28,9 +28,8 @@ def desktop_assets(v):
 
 
 def server_assets(v):
-    archives = [f'reignhub-server-{v}-{o}-{a}' + ('.zip' if o == 'windows' else '.tar.gz')
+    return [f'reignhub-server-{v}-{o}-{a}' + ('.zip' if o == 'windows' else '.tar.gz')
                 for o in ('linux', 'darwin', 'windows') for a in ('amd64', 'arm64')]
-    return archives + [f'reignhub-server-packaging-{v}.tar.gz']
 
 
 def digest(path):
@@ -80,8 +79,8 @@ def collect(args):
                 checksum(archive)
                 print(archive)
             continue
-        elif target in ('android_arm64', 'web', 'ios'):
-            suffix = {'android_arm64': '.apk', 'web': '.zip', 'ios': '.ipa'}[target]
+        elif target in ('android_arm64', 'ios'):
+            suffix = {'android_arm64': '.apk', 'ios': '.ipa'}[target]
             src = source / 'releases' / (stem + suffix)
             if not src.is_file():
                 raise SystemExit(f'Missing release file: {src}')
@@ -104,8 +103,10 @@ def collect(args):
 def verify(args):
     output = Path(args.output)
     expected = desktop_assets(args.version)
-    expected += [f'reignhub-web-worker-{args.version}.tar.gz', f'reignhub-{args.version}-ios-unsigned.ipa']
-    apks = list(output.glob(f'reignhub-{args.version}-android-arm64*.apk'))
+    expected.append(f'reignhub-{args.version}-ios-unsigned.ipa')
+    android = f'reignhub-{args.version}-android-arm64'
+    apks = [output / (android + suffix) for suffix in ('.apk', '-debug.apk')]
+    apks = [path for path in apks if path.is_file()]
     if len(apks) != 1:
         raise SystemExit('Expected exactly one Android APK')
     expected += [apks[0].name]

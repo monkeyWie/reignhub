@@ -12,7 +12,6 @@ import (
 
 type socketHeartbeat struct {
 	lastReceived atomic.Int64
-	nativeLease  bool
 }
 
 func newSocketHeartbeat() *socketHeartbeat {
@@ -63,7 +62,7 @@ func (h *socketHeartbeat) runWithPolicy(ctx context.Context, ws *websocket.Conn,
 			probe, stop := context.WithTimeout(ctx, writeTimeout)
 			err := ws.Write(probe, websocket.MessageText, []byte("reign:ping"))
 			pulses++
-			if err == nil && renew && (h.nativeLease || pulses%3 == 0) {
+			if err == nil && renew && pulses%3 == 0 {
 				err = ws.Write(probe, websocket.MessageText, []byte(`{"kind":"renew"}`))
 			}
 			stop()

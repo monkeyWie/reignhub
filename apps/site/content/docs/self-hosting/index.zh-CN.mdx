@@ -8,7 +8,7 @@ Agent 和项目运行在你的电脑上。连接服务负责配对设备、协�
 | 部署位置                | 安装什么                                                                         | 对外开放什么                                           |
 | ----------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------ |
 | 自己的电脑或服务器      | [Go 服务](/zh-CN/docs/self-hosting/go)，内置 Web 控制台和 SQLite                 | 控制台和信令使用 HTTPS，STUN 与原生中继使用 TCP 和 UDP |
-| 自己的 Cloudflare 账户  | [Worker 部署包](/zh-CN/docs/self-hosting/cloudflare)，使用 D1 和 Durable Objects | 一个 HTTPS 地址，包含加密 WebSocket 中继               |
+| 自己的 Cloudflare 账户  | [Cloudflare Worker](/zh-CN/docs/self-hosting/cloudflare)，使用 D1 和 Durable Objects | 一个 HTTPS 地址，包含加密 WebSocket 中继               |
 | 给已有中控加一个公网 IP | [额外的 Go 节点](/zh-CN/docs/self-hosting/probe)，可接 Go 或 Worker 中控         | 对外公布的 STUN、中继 TCP 和 UDP 端口                  |
 
 ### 连接第一台设备

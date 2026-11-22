@@ -1,7 +1,13 @@
 {
   "services": {
-    "control": {},
-    "stun": {},
-    "relay": {}
+    "control": {
+      "enable": true
+    },
+    "stun": {
+      "enable": true
+    },
+    "relay": {
+      "enable": true
+    }
   }
 }

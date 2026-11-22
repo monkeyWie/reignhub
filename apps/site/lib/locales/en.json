@@ -352,7 +352,7 @@
   "桌面和手机使用 NSGo 原生界面。下载页列出各平台安装包的实际大小，浏览器可直接打开 Web 工作台。": "Desktop and mobile apps use native NSGo views. Check the installer size for your platform, or open the workspace in your browser.",
   "按需使用内存": "Memory on demand",
   "打开会话时先读取近期消息，滚动时再加载相邻内容。查看 macOS 上的测量场景、内存占用和采样方法。": "Sessions load recent messages first and fetch nearby history as you scroll. See the memory measurements and sampling method on macOS.",
-  "Go 服务按系统和 CPU 架构打包，内含程序和 config.json。Worker 提供独立部署包。": "Each Go archive contains the executable and config.json for your OS and CPU. The Worker has its own deployment bundle.",
+  "Go 服务按系统和 CPU 架构打包，内含程序和 config.json。": "Each Go archive contains the executable and config.json for your OS and CPU.",
   "在桌面上聚合本地和已配对电脑的 Agent 会话，用手机或浏览器继续同一个项目。": "Bring sessions from local and paired computers into your desktop workspace. Continue the same project on mobile or Web.",
   "安装包大小见上方各平台链接。macOS 预览构建的内存测量见": "Each download lists its size. For macOS preview memory measurements, see"
 }

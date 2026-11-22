@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/monkeyWie/reignhub/clients/nsgo/hubui/locales"
+	"github.com/monkeyWie/reignhub/internal/connectivity"
 	"github.com/nsgo-dev/nsgo/core"
 	"github.com/nsgo-dev/nsgo/i18n"
 )
@@ -45,7 +46,7 @@ func (s *State) networkValue(cx *core.Scope, id, key string) string {
 	case "pendingRequests":
 		return i18n.FormatInteger(i18n.Language(cx), float64(number(m, key)))
 	case "path":
-		return str(d, "path")
+		return connectivity.PathLabel(str(d, "path"))
 	}
 	return "—"
 }

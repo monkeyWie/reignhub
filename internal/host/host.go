@@ -3,30 +3,38 @@ package host
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
+	"os"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"syscall"
+	"time"
+
 	"github.com/monkeyWie/reignhub/internal/agents"
 	"github.com/monkeyWie/reignhub/internal/config"
 	"github.com/monkeyWie/reignhub/internal/connectivity"
 	"github.com/monkeyWie/reignhub/internal/control"
 	"github.com/monkeyWie/reignhub/internal/device"
 	"github.com/monkeyWie/reignhub/internal/deviceservice"
+	"github.com/monkeyWie/reignhub/internal/nativepath"
 	"github.com/monkeyWie/reignhub/internal/provider"
+	"github.com/monkeyWie/reignhub/internal/relay"
 	"github.com/monkeyWie/reignhub/internal/remote"
-
 	"github.com/monkeyWie/reignhub/pkg/appdb"
 	"golang.org/x/crypto/bcrypt"
-	"os"
-
-	"sort"
-	"strings"
-	"sync"
-	"time"
 )
 
 type Grant struct {
+	Pairing string            `json:"pairing,omitempty"`
+	Revoked bool              `json:"revoked,omitempty"`
 	Info    device.ClientInfo `json:"info,omitempty"`
 	Client  string            `json:"client"`
 	Name    string            `json:"name"`
@@ -35,9 +43,12 @@ type Grant struct {
 	Expires int64             `json:"expires,omitempty"`
 }
 type saved struct {
-	Identity     device.Identity  `json:"identity"`
-	PasswordHash string           `json:"passwordHash,omitempty"`
-	Grants       map[string]Grant `json:"grants"`
+	Policy       connectivity.Policy `json:"policy,omitempty"`
+	Node         *relay.Enrollment   `json:"node,omitempty"`
+	Port         string              `json:"port,omitempty"`
+	Identity     device.Identity     `json:"identity"`
+	PasswordHash string              `json:"passwordHash,omitempty"`
+	Grants       map[string]Grant    `json:"grants"`
 }
 type Intent struct {
 	Info     device.ClientInfo `json:"info,omitempty"`
@@ -177,6 +188,8 @@ func (m *Manager) Run(ctx context.Context) {
 	go func() { defer close(done); m.autoConnect(ctx) }()
 	defer func() { <-done }()
 	var cancel context.CancelFunc
+	var background sync.WaitGroup
+	defer background.Wait()
 	defer func() {
 		if cancel != nil {
 			cancel()
@@ -193,6 +206,7 @@ func (m *Manager) Run(ctx context.Context) {
 		if c.ServiceURL != "" && signature != current {
 			if cancel != nil {
 				cancel()
+				background.Wait()
 				cancel = nil
 			}
 			current = ""
@@ -208,8 +222,17 @@ func (m *Manager) Run(ctx context.Context) {
 				m.mu.Lock()
 				i := m.state.Identity
 				m.status = "正在获取服务授权配置"
+				policy = m.state.Policy
 				m.mu.Unlock()
-				policy, e = device.HostNetwork(ctx, i.Service)
+				if policy.GrantPublicKey == "" {
+					policy, e = device.HostNetwork(ctx, i.Service)
+					if e == nil {
+						m.mu.Lock()
+						m.state.Policy = policy
+						e = m.save()
+						m.mu.Unlock()
+					}
+				}
 			}
 			if e != nil {
 				n := remote.NewHostStatus(c.ServiceURL)
@@ -234,9 +257,13 @@ func (m *Manager) Run(ctx context.Context) {
 				opts.ServiceID = policy.ServiceID
 				opts.ICEServers = policy.Servers()
 				opts.TCPSTUN = policy.TCPSTUN
+				opts.DirectAddresses = func() []nativepath.Endpoint { return m.directAddresses(i) }
 				opts.ResolveKey = m.key
 				opts.OnClientInfo = m.updateClientInfo
-				go remote.RunHostObserved(life, remote.Pairing{Relay: "ws" + strings.TrimPrefix(i.Service, "http"), Host: i.ID, Key: device.Random(), RelayToken: i.Token}, opts, m.d, n)
+				m.startRoutes(life, i, opts, n, &background)
+				background.Go(func() {
+					remote.RunHostObserved(life, remote.Pairing{Relay: "ws" + strings.TrimPrefix(i.Service, "http"), Host: i.ID, Key: device.Random(), RelayToken: i.Token}, opts, m.d, n)
+				})
 			}
 		}
 		if current != "" {
@@ -321,7 +348,7 @@ func (m *Manager) key(id string) (string, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	g, ok := m.state.Grants[id]
-	return g.Key, ok && (g.Expires == 0 || g.Expires > time.Now().Unix())
+	return g.Key, ok && !g.Revoked && (g.Expires == 0 || g.Expires > time.Now().Unix())
 }
 func (m *Manager) poll(ctx context.Context) {
 	m.mu.Lock()
@@ -335,6 +362,19 @@ func (m *Manager) poll(ctx context.Context) {
 		m.status = e.Error()
 		m.mu.Unlock()
 		return
+	}
+	m.mu.Lock()
+	var revoked []Grant
+	for _, g := range m.state.Grants {
+		if g.Revoked && g.Pairing != "" {
+			revoked = append(revoked, g)
+		}
+	}
+	m.mu.Unlock()
+	for _, g := range revoked {
+		if m.notifyRevocation(ctx, i, g) != nil {
+			break
+		}
 	}
 	var pairs []deviceservice.Pair
 	if device.Post(ctx, i.Service, i.Token, "/p2p/pairings/pending", map[string]any{}, &pairs) != nil {
@@ -407,12 +447,13 @@ func (m *Manager) respond(ctx context.Context, id string, allow bool) error {
 		if info.Name == "" {
 			info.Name = p.Name
 		}
-		g := Grant{Client: p.Client, Name: info.Name, Info: info, Public: p.Public, Key: device.Random()}
+		g := Grant{Pairing: p.ID, Client: p.Client, Name: info.Name, Info: info, Public: p.Public, Key: device.Random()}
 		if !intent.Remember {
 			g.Expires = time.Now().Add(8 * time.Hour).Unix()
 		}
 		var e error
-		reply, e = device.Seal(i.Private, p.Public, "reignhub/pair/reply/"+p.ID, map[string]any{"key": g.Key, "host": i.ID, "public": i.Public, "expires": g.Expires})
+		direct := m.directAddresses(i)
+		reply, e = device.Seal(i.Private, p.Public, "reignhub/pair/reply/"+p.ID, map[string]any{"key": g.Key, "host": i.ID, "public": i.Public, "expires": g.Expires, "direct": direct})
 		if e != nil {
 			return e
 		}
@@ -523,6 +564,9 @@ func (m *Manager) Local(ctx context.Context, r control.Request) (any, error) {
 		}
 		grants := []map[string]any{}
 		for _, g := range m.state.Grants {
+			if g.Revoked {
+				continue
+			}
 			grants = append(grants, map[string]any{"client": g.Client, "name": g.Name, "platform": g.Info.Platform, "kind": g.Info.Kind, "model": g.Info.Model, "fingerprint": device.Fingerprint(g.Public), "expires": g.Expires})
 		}
 		sort.Slice(pending, func(a, b int) bool { return pending[a]["id"].(string) < pending[b]["id"].(string) })
@@ -584,16 +628,25 @@ func (m *Manager) Local(ctx context.Context, r control.Request) (any, error) {
 		m.mu.Lock()
 		i := m.state.Identity
 		network := m.network
-		e := m.saveGrant(in.Client, nil)
+		prior, ok := m.state.Grants[in.Client]
+		if !ok {
+			m.mu.Unlock()
+			return nil, nil
+		}
+		revoked := Grant{Client: in.Client, Pairing: prior.Pairing, Revoked: true}
+		e := m.saveGrant(in.Client, &revoked)
 		if e == nil {
-			delete(m.state.Grants, in.Client)
+			m.state.Grants[in.Client] = revoked
 		}
 		m.mu.Unlock()
 		if e != nil {
 			return nil, e
 		}
 		network.DisconnectDevice(in.Client)
-		return nil, device.Post(ctx, i.Service, i.Token, "/p2p/pairings/revoke", map[string]string{"client": in.Client}, nil)
+		// The local deletion is authoritative. Retry the generation-bound notification
+		// while polling if the control is currently unreachable.
+		_ = m.notifyRevocation(ctx, i, revoked)
+		return nil, nil
 	case "host.enable", "host.activate":
 		m.activation.Lock()
 		defer m.activation.Unlock()
@@ -624,7 +677,7 @@ func (m *Manager) updateClientInfo(id string, info device.ClientInfo) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	old, ok := m.state.Grants[id]
-	if !ok || (old.Expires != 0 && old.Expires <= time.Now().Unix()) {
+	if !ok || old.Revoked || (old.Expires != 0 && old.Expires <= time.Now().Unix()) {
 		return fmt.Errorf("设备未获授权")
 	}
 	if old.Info == info && old.Name == info.Name {
@@ -656,4 +709,128 @@ func (m *Manager) saveGrant(id string, g *Grant) error {
 	}
 	_, err = db.Exec("INSERT INTO host_grants VALUES(?,?,?) ON CONFLICT(service,client) DO UPDATE SET value=excluded.value", m.state.Identity.Service, id, data)
 	return err
+}
+
+func (m *Manager) startRoutes(ctx context.Context, i device.Identity, opts remote.Options, status *remote.HostStatus, background *sync.WaitGroup) {
+	m.mu.Lock()
+	port := m.state.Port
+	node := m.state.Node
+	opts.Credentials = &relay.RouteCredentials{}
+	opts.Credentials.Store(&relay.Routes{Node: node})
+	m.mu.Unlock()
+	background.Go(func() {
+		// Choose a stable service port outside the dynamic client port range.
+		// A restarted host can otherwise lose its saved port to an outbound dial.
+		seed := sha256.Sum256([]byte(i.ID))
+		for attempt := 0; ctx.Err() == nil; attempt++ {
+			selected := port
+			if selected == "" {
+				selected = strconv.Itoa(20000 + (int(binary.BigEndian.Uint16(seed[:2]))+attempt)%10000)
+			}
+			listener, err := remote.ListenPaired(ctx, net.JoinHostPort("", selected), nativepath.Key([]byte(i.Private), "host-listener"), i.ID, opts, m.d, status)
+			if err == nil {
+				m.mu.Lock()
+				m.state.Port = selected
+				err = m.save()
+				m.mu.Unlock()
+				if err == nil {
+					<-ctx.Done()
+					listener.Close()
+					return
+				}
+				listener.Close()
+			}
+			status.ReportError(fmt.Errorf("原生直连监听失败: %w", err))
+			if port == "" && attempt < 8 && errors.Is(err, syscall.EADDRINUSE) {
+				continue
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(time.Second):
+			}
+		}
+	})
+	background.Go(func() {
+		var stop context.CancelFunc
+		defer func() {
+			if stop != nil {
+				stop()
+			}
+		}()
+		register := func(n *relay.Enrollment) {
+			if stop != nil {
+				stop()
+			}
+			var life context.Context
+			life, stop = context.WithCancel(ctx)
+			if n != nil {
+				background.Go(func() { remote.RegisterPaired(life, n, i.ID, opts, m.d, status) })
+			}
+		}
+		register(node)
+		for ctx.Err() == nil {
+			var routes relay.Routes
+			e := device.Post(ctx, i.Service, i.Token, "/p2p/routes", map[string]string{"host": i.ID}, &routes)
+			if e == nil && ctx.Err() == nil {
+				opts.Credentials.Store(&routes)
+			}
+			if e == nil && ctx.Err() == nil && (node != routes.Node && (node == nil || routes.Node == nil || *node != *routes.Node)) {
+				m.mu.Lock()
+				if m.state.Identity.Service != i.Service || ctx.Err() != nil {
+					m.mu.Unlock()
+					return
+				}
+				m.state.Node = routes.Node
+				e = m.save()
+				m.mu.Unlock()
+				if e == nil {
+					changed := !node.SameNode(routes.Node)
+					node = routes.Node
+					if changed {
+						register(node)
+					}
+				} else {
+					status.ReportError(e)
+				}
+			}
+			delay := time.Minute
+			if e != nil {
+				delay = 5 * time.Second
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(delay):
+			}
+		}
+	})
+}
+
+func (m *Manager) directAddresses(i device.Identity) []nativepath.Endpoint {
+	m.mu.Lock()
+	port := m.state.Port
+	owner := m.state.Identity.ID
+	m.mu.Unlock()
+	if port == "" || owner != i.ID {
+		return nil
+	}
+	return remote.DirectAddresses(port, nativepath.Pin(nativepath.Key([]byte(i.Private), "host-listener")))
+}
+
+func (m *Manager) notifyRevocation(ctx context.Context, i device.Identity, g Grant) error {
+	if err := device.Post(ctx, i.Service, i.Token, "/p2p/pairings/revoke", map[string]string{"client": g.Client, "pairing": g.Pairing}, nil); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	current := m.state.Grants[g.Client]
+	if m.state.Identity.ID != i.ID || !current.Revoked || current.Pairing != g.Pairing {
+		return nil
+	}
+	if err := m.saveGrant(g.Client, nil); err != nil {
+		return err
+	}
+	delete(m.state.Grants, g.Client)
+	return nil
 }

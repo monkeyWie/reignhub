@@ -17,24 +17,20 @@ import (
 )
 
 type Frame struct {
-	Native     *NativeWelcome `json:"nativeRelay,omitempty"`
-	Protocol   int            `json:"protocol,omitempty"`
-	AllowRelay bool           `json:"allowRelay,omitempty"`
-	Grant      string         `json:"grant,omitempty"`
-	Peer       string         `json:"peer,omitempty"`
-	Device     string         `json:"device,omitempty"`
-	Kind       string         `json:"kind"`
-	Body       []byte         `json:"body,omitempty"`
+	Protocol   int    `json:"protocol,omitempty"`
+	AllowRelay bool   `json:"allowRelay,omitempty"`
+	Grant      string `json:"grant,omitempty"`
+	Peer       string `json:"peer,omitempty"`
+	Device     string `json:"device,omitempty"`
+	Kind       string `json:"kind"`
+	Body       []byte `json:"body,omitempty"`
 }
 type connection struct {
-	ws           *websocket.Conn
-	device       string
-	peer         string
-	data         *websocket.Conn
-	nativeTicket string
-	nativePin    string
-	native       *nativePair
-	life         context.Context
+	ws     *websocket.Conn
+	device string
+	peer   string
+	data   *websocket.Conn
+	life   context.Context
 }
 
 func (c *connection) send(f Frame) error {
@@ -49,8 +45,9 @@ type relayRoom struct {
 	clients map[string]*connection
 }
 type Server struct {
+	nodeSockets                         int
+	meet                                rendezvous
 	ExternalRelays                      []RelayNode
-	externalPairs                       map[[2]string]*nativePair
 	nativePublic, nativePort, nativePin string
 	token                               string
 	mu                                  sync.Mutex
@@ -69,7 +66,7 @@ type Server struct {
 
 func New(token string) *Server {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Server{token: token, rooms: make(map[string]*relayRoom), externalPairs: make(map[[2]string]*nativePair), ctx: ctx, cancel: cancel}
+	return &Server{token: token, rooms: make(map[string]*relayRoom), ctx: ctx, cancel: cancel}
 }
 func ID() string { var b [16]byte; _, _ = rand.Read(b[:]); return hex.EncodeToString(b[:]) }
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -219,7 +216,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			s.mu.Unlock()
-			f.Native = nil
 			if target != nil {
 				if target.send(f) != nil {
 					// A controller may disappear while a host reply is in flight.
@@ -235,7 +231,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	life, end := context.WithCancel(s.ctx)
 	defer end()
 	c := &connection{ws: ws, device: deviceID, life: life}
-	var native *NativeWelcome
 	ticket := ""
 	if s.Grant != nil {
 		ticket = s.Grant(id, deviceID, role)
@@ -275,13 +270,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		room.clients[peer] = c
 	}
-	generation := room.host.peer
-	if allowedRelay && r.Header.Get("Origin") == "" {
-		native = s.welcome(id, r.Host, generation, peer, role)
-		if native != nil {
-			c.nativeTicket, c.nativePin = native.Ticket, native.Pin
-		}
-	}
 	s.mu.Unlock()
 	defer func() {
 		s.mu.Lock()
@@ -311,7 +299,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			_ = room.host.send(Frame{Peer: peer, Kind: "bye"})
 		}
 	}()
-	if err = c.send(Frame{Native: native, Peer: peer, Kind: "welcome", Protocol: 1, AllowRelay: allowWebSocket}); err != nil {
+	if err = c.send(Frame{Peer: peer, Kind: "welcome", Protocol: 1, AllowRelay: allowWebSocket}); err != nil {
 		return
 	}
 	// Ping bounds half-open connections and keeps common reverse proxies alive.
@@ -364,20 +352,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if s.Grant != nil {
 				ticket = s.Grant(id, deviceID, role)
 			}
-			var refreshed *NativeWelcome
-			if native != nil && IsExternalTicket(native.Ticket) {
-				permitted := true
-				if s.AuthorizeContext != nil {
-					_, permitted = s.AuthorizeContext(ctx, credential, id, role)
-				} else if s.Authorize != nil {
-					_, permitted = s.Authorize(credential, id, role)
-				}
-				if !permitted || (s.RelayAllowed != nil && !s.RelayAllowed(id, deviceID, role)) {
-					return
-				}
-				refreshed = s.welcome(id, r.Host, generation, peer, role)
-			}
-			if c.send(Frame{Native: refreshed, Kind: "lease", Peer: peer, Grant: ticket, AllowRelay: allowWebSocket}) != nil {
+			if c.send(Frame{Kind: "lease", Peer: peer, Grant: ticket, AllowRelay: allowWebSocket}) != nil {
 				return
 			}
 			if role == "client" {
@@ -399,7 +374,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			f.Grant = ticket
 		}
 		s.mu.Unlock()
-		f.Native = nil
 		if target != nil {
 			if target.send(f) != nil {
 				_ = target.ws.CloseNow()

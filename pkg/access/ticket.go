@@ -64,7 +64,8 @@ func Verify(key ed25519.PublicKey, token string, now time.Time) (Grant, error) {
 	return g, g.validate(now)
 }
 func (g Grant) validate(now time.Time) error {
-	if g.Audience != Audience || g.Namespace == "" || g.HostID == "" || g.DeviceID == "" || g.ID == "" || g.Role != "host" && g.Role != "client" || g.ExpiresAt <= now.Unix() || g.IssuedAt > now.Unix()+30 || g.ExpiresAt <= g.IssuedAt {
+	durable := g.ExpiresAt == 0 && g.Allows(g.Namespace, g.HostID, g.DeviceID, "offline")
+	if g.Audience != Audience || g.Namespace == "" || g.HostID == "" || g.DeviceID == "" || g.ID == "" || g.Role != "host" && g.Role != "client" || (!durable && g.ExpiresAt <= now.Unix()) || g.IssuedAt > now.Unix()+30 || (!durable && g.ExpiresAt <= g.IssuedAt) {
 		return errors.New("invalid or expired grant")
 	}
 	return nil

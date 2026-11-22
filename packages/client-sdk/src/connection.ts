@@ -82,7 +82,6 @@ export class Connection extends EventTarget {
   private failHandshake!: (e: Error) => void;
   private heartbeat = Date.now();
   private pulses = 0;
-  private preferDirectUntil = 0;
   progress: ConnectionProgress[] = [];
   path = "Connecting";
   allowRelay = false;
@@ -199,11 +198,12 @@ export class Connection extends EventTarget {
           .then(() => this.receive(JSON.parse(e.data) as Frame))
           .catch(() => this.close("连接数据校验失败"));
       };
-      ws.onclose = () => this.close("信令连接已断开");
-      ws.onerror = () => this.close("信令连接异常");
+      ws.onclose = () => this.signalLost("信令连接已断开");
+      ws.onerror = () => ws.close();
       this.tick = setInterval(() => {
         if (Date.now() - this.heartbeat > 85000) {
-          this.close("连接心跳超时");
+          ws.close();
+          this.signalLost("连接心跳超时");
           return;
         }
         if (this.signal.readyState === WebSocket.OPEN) {
@@ -214,52 +214,7 @@ export class Connection extends EventTarget {
         if (this.relay?.readyState === WebSocket.OPEN)
           this.relay.send("reign:ping");
       }, 25000);
-      if (this.allowRelay) {
-        this.report(
-          "relay-ready",
-          "relay",
-          "准备备用中继通道",
-          this.endpoint(routes.relay),
-        );
-        try {
-          const data = await this.socket(routes.relay, this.peer);
-          this.relay = data.ws;
-          this.report(
-            "relay-ready",
-            "relay",
-            "备用中继通道已就绪",
-            this.endpoint(routes.relay) + " · 优先直连",
-            "success",
-          );
-          this.relay.onclose = () => {
-            this.relay = undefined;
-            if (!this.dc || this.dc.readyState !== "open") {
-              if (this.established) this.close("数据连接已断开");
-              else this.update("Disconnected");
-            }
-          };
-          this.relay.onmessage = (e) => {
-            if (e.data !== "reign:pong") {
-              try {
-                const f = JSON.parse(e.data) as Frame;
-                if (f.kind === "error")
-                  this.dispatchEvent(
-                    new CustomEvent("error", { detail: f.error }),
-                  );
-              } catch {}
-            }
-          };
-        } catch (error) {
-          if (this.closed) throw error;
-          this.report(
-            "relay-ready",
-            "relay",
-            "备用中继暂不可用，继续尝试 P2P 直连",
-            error instanceof Error ? error.message : String(error),
-            "warning",
-          );
-        }
-      }
+      if (this.allowRelay) void this.openDataRelay();
       const ready = new Promise<void>((resolve, reject) => {
         this.handshook = resolve;
         this.failHandshake = reject;
@@ -284,9 +239,7 @@ export class Connection extends EventTarget {
       }
       this.update("Connecting · direct first");
       if (typeof RTCPeerConnection !== "undefined") {
-        try {
-          await this.offer();
-        } catch (e) {
+        void this.offer().catch((e) => {
           this.report(
             "ice",
             "udp",
@@ -294,8 +247,7 @@ export class Connection extends EventTarget {
             e instanceof Error ? e.message : String(e),
             "warning",
           );
-          if (!this.relay) throw e;
-        }
+        });
       } else {
         this.report(
           "ice",
@@ -308,7 +260,7 @@ export class Connection extends EventTarget {
       this.report("direct", "direct", "正在验证直连或中继路径");
       await this.waitPath();
       this.report("verify", "verify", "正在验证设备响应");
-      await this.call({ method: "providers" }, CONNECTION_STAGE_TIMEOUT);
+      await this.call({ method: "network" }, CONNECTION_STAGE_TIMEOUT);
       this.established = true;
       this.report(
         "connected",
@@ -322,6 +274,66 @@ export class Connection extends EventTarget {
       this.close();
       throw e;
     }
+  }
+  private async openDataRelay() {
+    this.report(
+      "relay-ready",
+      "relay",
+      "准备备用中继通道",
+      this.endpoint(routes.relay),
+    );
+    try {
+      const data = await this.socket(routes.relay, this.peer);
+      this.relay = data.ws;
+      this.report(
+        "relay-ready",
+        "relay",
+        "备用中继通道已就绪",
+        this.endpoint(routes.relay) + " · 优先直连",
+        "success",
+      );
+      this.relay.onclose = () => {
+        this.relay = undefined;
+        if (!this.dc || this.dc.readyState !== "open") {
+          if (this.established) this.close("数据连接已断开");
+          else this.update("Disconnected");
+        }
+      };
+      this.relay.onmessage = (e) => {
+        if (e.data !== "reign:pong") {
+          try {
+            const f = JSON.parse(e.data) as Frame;
+            if (f.kind === "error")
+              this.dispatchEvent(new CustomEvent("error", { detail: f.error }));
+          } catch {}
+        }
+      };
+    } catch (error) {
+      if (this.closed) return;
+      this.report(
+        "relay-ready",
+        "relay",
+        "备用中继暂不可用，继续尝试 P2P 直连",
+        error instanceof Error ? error.message : String(error),
+        "warning",
+      );
+    }
+  }
+  private signalLost(reason: string) {
+    if (this.closed) return;
+    if (!this.established || this.dc?.readyState !== "open") {
+      this.close(reason);
+      return;
+    }
+    clearInterval(this.tick);
+    this.relay?.close();
+    this.report(
+      "signal-lost",
+      "signal",
+      reason,
+      "已建立的 WebRTC 直连继续使用",
+      "warning",
+    );
   }
   private aad(kind: string, out = true) {
     return "reign/p2p/" + this.peer + "/" + (out ? "c2h" : "h2c") + "/" + kind;
@@ -391,7 +403,6 @@ export class Connection extends EventTarget {
     else if (f.kind === "data") this.response(plain);
   }
   private async offer() {
-    this.preferDirectUntil = Date.now() + 1500;
     for (const url of this.config.publicStun)
       this.report(
         "stun:" + url,
@@ -490,7 +501,7 @@ export class Connection extends EventTarget {
         );
       if (["failed", "disconnected", "closed"].includes(pc.connectionState)) {
         if (this.relay?.readyState === WebSocket.OPEN)
-          this.update("Relay · encrypted");
+          this.update("Relay · WebSocket");
         else if (this.established) this.close("直连已断开，且没有可用中继");
         else this.update("Disconnected");
       }
@@ -533,7 +544,7 @@ export class Connection extends EventTarget {
         .catch(() => {});
     };
     this.dc.onclose = () =>
-      this.update(this.relay ? "Relay · encrypted" : "Disconnected");
+      this.update(this.relay ? "Relay · WebSocket" : "Disconnected");
     this.dc.onmessage = (e) => {
       this.chain = this.chain
         .then(async () => {
@@ -686,11 +697,7 @@ export class Connection extends EventTarget {
   }
   private async waitPath() {
     const deadline = Date.now() + CONNECTION_STAGE_TIMEOUT;
-    while (
-      !this.closed &&
-      this.dc?.readyState !== "open" &&
-      (!this.relay || Date.now() < this.preferDirectUntil)
-    ) {
+    while (!this.closed && this.dc?.readyState !== "open" && !this.relay) {
       if (Date.now() > deadline)
         throw Error(
           this.allowRelay
@@ -802,7 +809,7 @@ export class Connection extends EventTarget {
           }
           this.dc.send(sealed as unknown as ArrayBuffer);
         } else if (this.relay?.readyState === WebSocket.OPEN) {
-          this.update("Relay · encrypted");
+          this.update("Relay · WebSocket");
           this.report(
             "path:relay",
             "relay",

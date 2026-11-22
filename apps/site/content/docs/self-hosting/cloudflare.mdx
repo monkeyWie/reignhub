@@ -3,18 +3,6 @@ title: Deploy to Cloudflare
 description: Deploy the open-source Worker, initialize D1 and connect your devices.
 ---
 
-## Deploy the release bundle
-
-Choose **Cloudflare Worker** under [server downloads](/download#server), verify the checksum and extract the archive. With Node.js 24 installed, run these commands in the directory containing `wrangler.json`.
-
-```sh
-npx wrangler@4 login
-npx wrangler@4 deploy
-npx wrangler@4 d1 migrations apply DB --remote
-```
-
-Keep the Worker's HTTPS origin and D1 binding. A Worker on its own provides public UDP STUN discovery and an authorized WebSocket relay. To offer your own STUN or native QUIC/TCP relay, [add a node](/docs/self-hosting/probe).
-
 ## Deployment button
 
 Open [Deploy to Cloudflare](https://deploy.workers.cloudflare.com/?url=https://github.com/monkeyWie/reignhub), authorize your Cloudflare account and follow the setup flow.
@@ -25,7 +13,7 @@ Grant the Worker, D1 and Durable Object permissions requested by the setup flow,
 
 ## Manual deployment
 
-Install Git, Node.js 24 and pnpm 10.34.5, and prepare a Cloudflare account:
+Install Git, Go (see `go.mod`), Node.js 24 and pnpm 10.34.5, and prepare a Cloudflare account:
 
 ```sh
 git clone https://github.com/monkeyWie/reignhub.git
@@ -62,8 +50,6 @@ To allow additional Web origins, set `ALLOWED_ORIGINS` to exact comma-separated 
 
 The root URL redirects to `/chat/`. This package includes only the NSGo Web console, connection APIs and encrypted relay. It does not build or bundle Next.js, marketing pages, documentation or search indexes. Website content is published only through the separate official website CI; no `SITE_URL` or website branding variables are needed.
 
-Building from source also requires Go (see `go.mod`) to compile the WASM console. The release Worker archive already includes the compiled console and can be deployed without a Go toolchain.
-
 ## Local verification
 
 ```sh
@@ -72,3 +58,5 @@ pnpm exec wrangler dev --port 8787
 ```
 
 Open `http://localhost:8787/chat`. Local resources are separate from production D1; never point development at a real user's device state directory.
+
+Browsers can use an independent Go relay. Set the WSS origin, optional native addresses and node credential in the same entry of the `EXTERNAL_RELAYS` secret. [Configure a relay node](/docs/self-hosting/probe)

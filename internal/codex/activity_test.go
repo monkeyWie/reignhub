@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/monkeyWie/reignhub/internal/provider"
 )
 
 func TestMessageTimesKeepRecordedPrecisionAndMarkTurnFallbacks(t *testing.T) {
@@ -78,7 +80,7 @@ func TestActivitySnapshotsPreserveToolLifecycleAndStructuredActions(t *testing.T
 	if read.Activities[0].Title != "读取 main.dart" || !strings.Contains(read.Activities[0].Detail, "/project/main.dart") {
 		t.Fatal("read target lost", read.Activities[0])
 	}
-	if turn.Items[1].Status != "failed" || turn.Items[1].Activities[0].Kind != "command" {
+	if turn.Items[1].Status != "failed" || turn.Items[1].Activities[0] != (provider.Activity{Kind: "command", Title: "运行命令", Detail: "go test"}) {
 		t.Fatal("failed command lost")
 	}
 	if turn.Items[2].Status != "inProgress" || turn.Items[2].Activities[0].Detail != "+new line" {

@@ -4,7 +4,8 @@ import { drizzle } from "drizzle-orm/d1";
 import { and, eq, gt, inArray } from "drizzle-orm";
 import { APIError, PROTOCOL, routes, type Device } from "@reignhub/protocol";
 import { devices, grants, pairings, type DeviceRow } from "./schema";
-import { hash, id, random, serviceIdentity, un64 } from "./crypto";
+import { enrollNode } from "./external-relay";
+import { issueGrant, hash, id, random, serviceIdentity, un64 } from "./crypto";
 import { unrestricted, type CoreEnv, type Policy } from "./types";
 export * from "./schema";
 export * from "./types";
@@ -234,7 +235,6 @@ export async function handleCore(
       const headers = new Headers();
       headers.set("Upgrade", "websocket");
       headers.set("x-reignhub-device", device.id);
-      if (!request.headers.has("Origin")) headers.set("x-reignhub-native", "1");
       if (request.headers.has("Sec-WebSocket-Protocol"))
         headers.set(
           "Sec-WebSocket-Protocol",
@@ -300,6 +300,58 @@ export async function handleCore(
       } else {
         const device = await authenticate(request, env);
         switch (url.pathname) {
+          case routes.enrollment: {
+            const hostID = input.host;
+            if (
+              (request.headers.has("Origin") && device.id === hostID) ||
+              typeof hostID !== "string" ||
+              !/^[a-f0-9]{32}$/.test(hostID) ||
+              !(await canAccess(env, device.id, hostID))
+            )
+              throw new APIError("PAIRING_REQUIRED", "设备未获授权", 403);
+            const host = await db
+              .select()
+              .from(devices)
+              .where(and(eq(devices.id, hostID), eq(devices.host, true)))
+              .get();
+            if (!host) throw new APIError("INVALID_HOST", "无效被控端", 404);
+            const role = device.id === hostID ? "host" : "client";
+            const decision = await policy.admit(
+              env,
+              device,
+              host,
+              "connect",
+              role,
+            );
+            // Managed, metered entitlements remain subject to their live policy.
+            const durable = policy.deployment === "self-hosted";
+            const signed = await issueGrant(
+              env,
+              hostID,
+              device.id,
+              role,
+              decision,
+              durable ? "private" : "managed",
+            );
+            const identity = await serviceIdentity(env);
+            result = json({
+              grant: signed.ticket,
+              expires: signed.expires,
+              node: decision.limits.allowRelay
+                ? await enrollNode(
+                    env,
+                    identity.serviceId,
+                    durable ? "" : identity.public,
+                    hostID,
+                    device.id,
+                    role,
+                    signed.ticket,
+                  )
+                : undefined,
+            });
+            result.headers.set("Cache-Control", "no-store");
+            break;
+          }
           case routes.presence: {
             const name =
               typeof input.name === "string" &&
@@ -494,7 +546,7 @@ export async function handleCore(
                 throw new APIError("INVALID_PAIRING", "缺少加密配对响应");
               await env.DB.batch([
                 env.DB.prepare(
-                  "INSERT OR IGNORE INTO device_grants(host,client) SELECT host,client FROM pairings WHERE id=? AND host=? AND state='pending' AND expires>?",
+                  "INSERT INTO device_grants(host,client,pairing) SELECT host,client,id FROM pairings WHERE id=? AND host=? AND state='pending' AND expires>? ON CONFLICT(host,client) DO UPDATE SET pairing=excluded.pairing",
                 ).bind(entry.id, device.id, now),
                 env.DB.prepare(
                   "UPDATE pairings SET state='approved',reply=? WHERE id=? AND state='pending'",
@@ -517,17 +569,21 @@ export async function handleCore(
             break;
           }
           case routes.revoke: {
-            await db
+            const revoked = await db
               .delete(grants)
               .where(
                 and(
                   eq(grants.host, device.id),
                   eq(grants.client, String(input.client)),
+                  typeof input.pairing === "string" && input.pairing
+                    ? eq(grants.pairing, input.pairing)
+                    : undefined,
                 ),
               );
-            await roomCall(env, device.id, "/revoke", {
-              device: String(input.client),
-            });
+            if (revoked.meta.changes)
+              await roomCall(env, device.id, "/revoke", {
+                device: String(input.client),
+              });
             result = json({ ok: true });
             break;
           }

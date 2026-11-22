@@ -67,7 +67,7 @@ func main() {
 	defer c.Close()
 	want := "P2P · TCP"
 	if *expect == "relay" {
-		want = "Relay · encrypted"
+		want = "Relay · WebSocket"
 		deadline := time.Now().Add(6 * time.Second)
 		for time.Now().Before(deadline) {
 			if c.Path() != want {

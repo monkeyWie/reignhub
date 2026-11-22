@@ -3,18 +3,6 @@ title: 部署到 Cloudflare
 description: 部署开源 Worker，初始化 D1，连接自己的设备。
 ---
 
-## 用发布包部署
-
-在[服务端下载页](/zh-CN/download#server)选择 **Cloudflare Worker**，核对校验和后解压，进入包含 `wrangler.json` 的目录。准备好 Node.js 24，在这个目录运行：
-
-```sh
-npx wrangler@4 login
-npx wrangler@4 deploy
-npx wrangler@4 d1 migrations apply DB --remote
-```
-
-保存 Worker 的 HTTPS 地址和 D1 绑定。只部署 Worker 时，客户端可使用内置公共 UDP STUN 和授权的 WebSocket 中继。如果需要自己的 STUN 或 QUIC/TCP 中继，请按[添加节点](/zh-CN/docs/self-hosting/probe)配置。
-
 ## 一键部署
 
 打开仓库中的 [Deploy to Cloudflare](https://deploy.workers.cloudflare.com/?url=https://github.com/monkeyWie/reignhub) 入口，授权你自己的 Cloudflare 账号，按向导创建服务。
@@ -25,7 +13,7 @@ npx wrangler@4 d1 migrations apply DB --remote
 
 ## 手动部署
 
-需要 Git、Node.js 24、pnpm 10.34.5 和 Cloudflare 账号。在自己的目录克隆开源仓库：
+需要 Git、Go（版本见 `go.mod`）、Node.js 24、pnpm 10.34.5 和 Cloudflare 账号。在自己的目录克隆开源仓库：
 
 ```sh
 git clone https://github.com/monkeyWie/reignhub.git
@@ -62,8 +50,6 @@ curl https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev/p2p/config
 
 根地址统一跳转 `/chat/`。开源包只包含 NSGo Web 控制台、连接 API 和加密中继，不构建或打包 Next.js、官网、文档与搜索索引。官网内容只通过独立的官方 CI 发布，无需配置 `SITE_URL` 等官网构建变量。
 
-从源码构建还需要 Go（版本见 `go.mod`）来编译 WASM 控制台。发布的 Worker 归档已经包含编译后的控制台，使用归档部署无需 Go 工具链。
-
 ## 本地验证
 
 ```sh
@@ -72,3 +58,5 @@ pnpm exec wrangler dev --port 8787
 ```
 
 访问 `http://localhost:8787/chat`。本地资源与生产 D1 分开，开发时不要指向真实用户的设备状态目录。
+
+浏览器也可以使用自部署的 Go 中继。在 `EXTERNAL_RELAYS` Secret 的同一个节点条目里填写 WSS 域名、可选的原生地址和节点凭据。[添加中继节点](/docs/self-hosting/probe)

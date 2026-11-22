@@ -7,36 +7,46 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
+	"runtime"
+	"slices"
+	"strings"
+	"sync"
+	"time"
+
 	"github.com/monkeyWie/reignhub/internal/assets"
 	"github.com/monkeyWie/reignhub/internal/connectivity"
 	"github.com/monkeyWie/reignhub/internal/control"
 	"github.com/monkeyWie/reignhub/internal/device"
 	"github.com/monkeyWie/reignhub/internal/deviceservice"
+	"github.com/monkeyWie/reignhub/internal/nativepath"
+	"github.com/monkeyWie/reignhub/internal/relay"
 	"github.com/monkeyWie/reignhub/internal/remote"
 	"github.com/monkeyWie/reignhub/internal/store"
 	"github.com/monkeyWie/reignhub/pkg/appdb"
-
 	"github.com/monkeyWie/reignhub/pkg/persistence"
-	"path/filepath"
-	"runtime"
-	"strings"
-	"sync"
-	"time"
 )
 
+type networkAddresses struct {
+	Network   string                `json:"network"`
+	Addresses []nativepath.Endpoint `json:"addresses"`
+}
 type Saved struct {
-	Platform          string `json:"platform,omitempty"`
-	ID                string `json:"id"`
-	Service           string `json:"service"`
-	ConnectionID      string `json:"connectionId"`
-	Name              string `json:"name"`
-	Host              string `json:"host"`
-	Public            string `json:"public"`
-	Key               string `json:"key"`
-	Expires           int64  `json:"expires"`
-	RelayOnly         bool   `json:"relayOnly,omitempty"`
-	HasConnected      bool   `json:"hasConnected,omitempty"`
-	ReconnectDisabled bool   `json:"reconnectDisabled,omitempty"`
+	Networks          []networkAddresses    `json:"networks,omitempty"`
+	Direct            []nativepath.Endpoint `json:"direct,omitempty"`
+	Routes            relay.Routes          `json:"routes,omitempty"`
+	Platform          string                `json:"platform,omitempty"`
+	ID                string                `json:"id"`
+	Service           string                `json:"service"`
+	ConnectionID      string                `json:"connectionId"`
+	Name              string                `json:"name"`
+	Host              string                `json:"host"`
+	Public            string                `json:"public"`
+	Key               string                `json:"key"`
+	Expires           int64                 `json:"expires"`
+	RelayOnly         bool                  `json:"relayOnly,omitempty"`
+	HasConnected      bool                  `json:"hasConnected,omitempty"`
+	ReconnectDisabled bool                  `json:"reconnectDisabled,omitempty"`
 }
 type Hub struct {
 	Assets      *assets.Cache
@@ -99,9 +109,6 @@ func (h *Hub) identity(ctx context.Context, service, name string) (device.Identi
 
 	if e := h.DB.LoadIdentity(service, "controller", &i); e == nil {
 		if name != "" && name != i.Name {
-			if e := device.Post(ctx, service, i.Token, "/p2p/devices/presence", map[string]any{"name": name}, nil); e != nil {
-				return i, e
-			}
 			i.Name = name
 		}
 		info := device.CurrentClientInfo(ctx, i.Info)
@@ -157,7 +164,7 @@ func (h *Hub) List() ([]map[string]any, error) {
 				return c.Metrics()
 			}
 			return nil
-		}(), "autoReconnect": s.HasConnected && !s.ReconnectDisabled && s.Key != "" && (s.Expires == 0 || s.Expires > time.Now().Unix())})
+		}(), "independentRoutes": s.Routes.Grant != "" && (s.Routes.Node != nil || !s.RelayOnly && (len(s.Direct) > 0 || len(s.Networks) > 0)), "autoReconnect": s.HasConnected && !s.ReconnectDisabled && s.Key != "" && (s.Expires == 0 || s.Expires > time.Now().Unix())})
 	}
 	return r, nil
 }
@@ -182,7 +189,24 @@ func (h *Hub) Presence(ctx context.Context) ([]device.DeviceStatus, error) {
 }
 
 func (h *Hub) Connect(ctx context.Context, service, code, public, password, name string, remember, relayOnly bool) (Saved, error) {
-	return h.connect(ctx, service, code, public, password, name, remember, relayOnly, false, nil)
+	origin, err := device.ServiceURL(service)
+	if err != nil {
+		return Saved{}, err
+	}
+	keys, err := h.DB.Environments()
+	if err != nil {
+		return Saved{}, err
+	}
+	for _, id := range keys {
+		var saved Saved
+		if err := h.DB.LoadEnvironment(id, &saved); err != nil {
+			return Saved{}, err
+		}
+		if saved.Service == origin && saved.ConnectionID == code && saved.Key != "" && (saved.Expires == 0 || saved.Expires > time.Now().Unix()) {
+			return h.connect(ctx, origin, code, public, password, name, remember, relayOnly, false, &saved)
+		}
+	}
+	return h.connect(ctx, origin, code, public, password, name, remember, relayOnly, false, nil)
 }
 
 // Reconnect only reuses an existing valid grant. It never requests new approval
@@ -307,6 +331,7 @@ func (h *Hub) connect(ctx context.Context, service, code, public, password, name
 				var reply struct {
 					Key, Host, Public string
 					Expires           int64
+					Direct            []nativepath.Endpoint
 				}
 				if e = device.Open(i.Private, d.Public, "reignhub/pair/reply/"+reqID, result.Reply, &reply); e != nil {
 					return s, e
@@ -314,7 +339,7 @@ func (h *Hub) connect(ctx context.Context, service, code, public, password, name
 				if reply.Host != d.ID || reply.Public != d.Public {
 					return s, fmt.Errorf("无效主机授权")
 				}
-				s = Saved{ID: id, Service: service, ConnectionID: d.ConnectionID, Name: d.Name, Host: d.ID, Public: d.Public, Key: reply.Key, Expires: reply.Expires}
+				s = Saved{ID: id, Service: service, ConnectionID: d.ConnectionID, Name: d.Name, Host: d.ID, Public: d.Public, Key: reply.Key, Expires: reply.Expires, Direct: reply.Direct}
 				if e = h.DB.SaveEnvironment(id, s); e != nil {
 					return s, e
 				}
@@ -340,7 +365,7 @@ func (h *Hub) connect(ctx context.Context, service, code, public, password, name
 		}
 		_ = h.DB.Get("network:"+service, &cache)
 		policy := cache.Policy
-		if cached == nil || cache.At.IsZero() || time.Since(cache.At) > 10*time.Minute {
+		if cached == nil || (cache.At.IsZero() && s.Routes.Grant == "") {
 			policy = device.Network(connectCtx, service)
 			cache.Policy, cache.At = policy, time.Now()
 			if err := h.DB.Put("network:"+service, cache); err != nil {
@@ -351,7 +376,56 @@ func (h *Hub) connect(ctx context.Context, service, code, public, password, name
 		opts.ICEServers = policy.Servers()
 		opts.TCPSTUN = policy.TCPSTUN
 	}
-	c, e := remote.Connect(connectCtx, remote.Pairing{Relay: "ws" + strings.TrimPrefix(service, "http"), Host: d.ID, Key: s.Key, RelayToken: i.Token}, opts)
+	pairKey := s.Key
+	network := remote.NetworkKey()
+	direct := s.Direct
+	for _, hints := range s.Networks {
+		if hints.Network == network {
+			direct = uniqueEndpoints(append(append([]nativepath.Endpoint{}, hints.Addresses...), direct...))
+			break
+		}
+	}
+	opts.RememberAddresses = func(endpoints []nativepath.Endpoint) {
+		if len(endpoints) == 0 {
+			return
+		}
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		var current Saved
+		if h.generation[id] != generation || h.DB.LoadEnvironment(id, &current) != nil || current.Key != pairKey {
+			return
+		}
+		networks := []networkAddresses{{Network: network, Addresses: uniqueEndpoints(endpoints)}}
+		for _, prior := range current.Networks {
+			if prior.Network != network && len(networks) < 3 {
+				networks = append(networks, prior)
+			}
+		}
+		current.Networks = networks
+		_ = h.DB.SaveEnvironment(id, current)
+	}
+	opts.FetchRoutes = func(refresh context.Context) (relay.Routes, error) {
+		var routes relay.Routes
+		err := device.Post(refresh, service, i.Token, "/p2p/routes", map[string]string{"host": d.ID}, &routes)
+		if err != nil {
+			return routes, err
+		}
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		if refresh.Err() != nil || h.generation[id] != generation {
+			return relay.Routes{}, context.Canceled
+		}
+		var current Saved
+		if err = h.DB.LoadEnvironment(id, &current); err != nil {
+			return relay.Routes{}, err
+		}
+		if current.Key != pairKey {
+			return relay.Routes{}, context.Canceled
+		}
+		current.Routes = routes
+		return routes, h.DB.SaveEnvironment(id, current)
+	}
+	c, e := remote.ConnectRoutes(connectCtx, remote.Pairing{Relay: "ws" + strings.TrimPrefix(service, "http"), Host: d.ID, Key: s.Key, RelayToken: i.Token}, opts, i.ID, s.Routes, direct)
 	if e != nil {
 		return s, e
 	}
@@ -367,6 +441,11 @@ func (h *Hub) connect(ctx context.Context, service, code, public, password, name
 	}
 	if platform := device.NormalizePlatform(c.HostPlatform()); platform != "" {
 		s.Platform = platform
+	}
+	var stored Saved
+	if h.DB.LoadEnvironment(id, &stored) == nil && stored.Key == s.Key {
+		s.Routes = stored.Routes
+		s.Networks = stored.Networks
 	}
 	s.Name, s.ConnectionID = d.Name, d.ConnectionID
 	s.RelayOnly, s.ReconnectDisabled, s.HasConnected = relayOnly, false, true
@@ -522,4 +601,18 @@ func publishClientInfo(c *remote.Client, info device.ClientInfo) {
 		params, _ := json.Marshal(info)
 		_ = c.Call(ctx, control.Request{Method: "peer.info", Params: params}, nil)
 	}()
+}
+
+func uniqueEndpoints(in []nativepath.Endpoint) []nativepath.Endpoint {
+	out := make([]nativepath.Endpoint, 0, 8)
+	for _, e := range in {
+		if e.Address == "" || e.Pin == "" || slices.Contains(out, e) {
+			continue
+		}
+		out = append(out, e)
+		if len(out) == 8 {
+			break
+		}
+	}
+	return out
 }

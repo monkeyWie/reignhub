@@ -1,0 +1,1 @@
+ALTER TABLE device_grants ADD COLUMN pairing TEXT NOT NULL DEFAULT '';

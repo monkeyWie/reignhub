@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -46,7 +47,7 @@ func Start(c Config) (_ *Runtime, err error) {
 			_ = r.Close()
 		}
 	}()
-	if c.Control {
+	if c.Control || c.WebSocket {
 		r.listener, err = net.Listen("tcp", c.Listen)
 		if err != nil {
 			return nil, fmt.Errorf("HTTP listen: %w", err)
@@ -67,11 +68,12 @@ func Start(c Config) (_ *Runtime, err error) {
 		}
 		r.TCPAddr = r.tcp.Addr()
 	}
-	if c.Control || c.NativeListen != "" {
+	if c.Control || c.WebSocket || c.NativeListen != "" {
 		r.directory, err = deviceservice.New(c.State, c.Origins)
 		if err != nil {
 			return nil, err
 		}
+		r.directory.SetRevokedRelayDevices(c.RevokedDevices)
 		r.directory.ConfigureNative(c.Nodes, c.WebSocket)
 		r.directory.ConfiguredSTUN = c.STUNServers
 		if c.NativeListen != "" {
@@ -93,9 +95,9 @@ func Start(c Config) (_ *Runtime, err error) {
 			_, r.directory.TCPSTUNPort, _ = net.SplitHostPort(r.TCPAddr.String())
 		}
 	}
-	if c.Control {
+	if c.Control || c.WebSocket {
 		web := webui.Handler()
-		if c.Web != "" {
+		if c.Control && c.Web != "" {
 			web, err = webui.Directory(c.Web)
 			if err != nil {
 				return nil, err
@@ -123,9 +125,21 @@ func Start(c Config) (_ *Runtime, err error) {
 	return r, nil
 }
 
-func handler(c Config, directory http.Handler, web http.Handler) http.Handler {
+func handler(c Config, directory *deviceservice.Server, web http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
+		if r.URL.Path == "/p2p/node" {
+			if !c.WebSocket {
+				http.NotFound(w, r)
+				return
+			}
+			directory.ServeNode(w, r)
+			return
+		}
+		if !c.Control && r.URL.Path != "/healthz" {
+			http.NotFound(w, r)
+			return
+		}
 		switch {
 		case r.URL.Path == "/healthz":
 			if r.Method != "GET" && r.Method != "HEAD" {
@@ -228,9 +242,32 @@ func Run() {
 	log.Printf("ReignHub server %s; HTTP=%v UDP STUN=%v TCP STUN=%v native relay=%v", Version, r.HTTPAddr, r.UDPAddr, r.TCPAddr, nativeAddr)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if r.native != nil || c.WebSocket {
+		go r.watchRevocations(ctx, cmd.file, c.RevokedDevices)
+	}
 	select {
 	case <-ctx.Done():
 	case err := <-r.errors:
 		log.Print(err)
+	}
+}
+
+// Listener changes take effect on restart. Revocations also affect live legs,
+// so reread the small local config and apply only that field.
+func (r *Runtime) watchRevocations(ctx context.Context, path string, previous []string) {
+	tick := time.NewTicker(2 * time.Second)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+		}
+		next, err := loadConfig(path)
+		if err != nil || slices.Equal(previous, next.RevokedDevices) {
+			continue
+		}
+		previous = next.RevokedDevices
+		r.directory.SetRevokedRelayDevices(previous)
 	}
 }

@@ -5,7 +5,7 @@ description: A standalone binary with SQLite, Web, signaling, relay and TCP/UDP 
 
 ## Download and start
 
-Choose the `reignhub-server` archive for your OS and CPU from [server downloads](/download#server). Verify it against the release’s `SHA256SUMS`, extract it and enter the directory containing the executable and `config.json`. The binary embeds the Web console.
+Choose the `reignhub-server` archive for your OS and CPU from [server downloads](/download#server). Verify it against the archive’s SHA-256 digest on GitHub Releases, extract it and enter the directory containing the executable and `config.json`. The binary embeds the Web console.
 
 ```sh
 ./reignhub-server --version
@@ -24,19 +24,21 @@ docker compose -f deploy/service/compose.yaml up -d --build
 
 The server reads `config.json` in the working directory. Archives include the template. With a binary-only install, run `reignhub-server --init` once in your service directory, edit the file and run `reignhub-server`. Initialization preserves existing files. Use `--config PATH` to select a different file. Relative state, Web and TLS paths resolve from the config directory.
 
-The default file includes three service groups: `control` (device directory, pairing, signaling and Web), `stun` and `relay`. When you specify groups, only those listed start. This configuration runs TCP and UDP discovery on port 3478 on all interfaces.
+All three service groups default to enabled. To use a Worker for control and run only STUN and relay on this machine, set `config.json` to:
 
 ```json
 {
-  "services": { "stun": { "listen": ":3478" } }
+  "services": { "control": { "enable": false } }
 }
 ```
+
+With local control disabled, port 26330 serves the independent WebSocket relay. A Worker can advertise its public WSS origin in `EXTERNAL_RELAYS`.
+
+When upgrading from RC.2, set `enable` to `false` for any service that was disabled by omission. STUN uses port 26331 and the native relay uses port 26332 over both UDP and TCP.
 
 Restart the Go service after editing. A control service can use `services.control.stunServers` to add discovery nodes alongside the built-in Cloudflare, Google and Bilibili (`stun.chat.bilibili.com:3478`) UDP nodes and `services.control.externalRelays` to register relay addresses and node credentials.
 
 ## Installation and upgrades
-
-The release packaging archive contains Homebrew and Scoop definitions with verified URLs/hashes. Homebrew requires a tap: create one with `brew tap-new reignhub/local`, copy `Formula/reignhub-server.rb` into `$(brew --repository reignhub/local)/Formula/`, then run `brew install reignhub/local/reignhub-server`. Windows can use `scoop install ./bucket/reignhub-server.json`. Homebrew supports `brew services start reignhub-server`. A short tap command requires a separately published tap; package registration is not part of a source build.
 
 For Linux, use the systemd unit in the source repository’s `deploy/service/` directory. Preserve the SQLite database when upgrading. Stop the service before copying the database and any WAL/SHM files, or use SQLite's backup API. The database contains the persistent service ID, signing key, device metadata, credential hashes and pairing permissions, but no chat plaintext. Check `/healthz`, `/p2p/config` and an actual paired connection after restarting.
 

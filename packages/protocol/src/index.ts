@@ -1,6 +1,7 @@
 export const PROTOCOL = 1;
 export const SOCKET_PROTOCOL = "reign.p2p";
 export const routes = {
+  enrollment: "/p2p/routes",
   config: "/p2p/config",
   register: "/p2p/devices/register",
   presence: "/p2p/devices/presence",
@@ -81,13 +82,6 @@ export interface Frame {
   body?: string;
   grant?: string;
   allowRelay?: boolean;
-  nativeRelay?: {
-    address?: string;
-    udpAddress?: string;
-    tcpAddress?: string;
-    pin: string;
-    ticket: string;
-  };
   protocol?: number;
   error?: string;
 }

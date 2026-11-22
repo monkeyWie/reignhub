@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Build standalone Go servers with the same chunked Web console as the Worker."""
 import argparse
-import hashlib
 import json
 import os
 import re
@@ -18,44 +17,6 @@ sys.path.insert(0, str(ROOT / 'scripts/ci'))
 from release import checksum, version
 
 TARGETS = tuple((os_name, arch) for os_name in ('linux', 'darwin', 'windows') for arch in ('amd64', 'arm64'))
-
-
-def package_managers(output, release_version, archives):
-    """Generate exact release URLs/checksums; publishing a tap/bucket is separate."""
-    base = f'https://github.com/monkeyWie/reignhub/releases/download/v{release_version}'
-    def url(os_name, arch):
-        path = archives[(os_name, arch)]
-        return f'{base}/{path.name}', hashlib.sha256(path.read_bytes()).hexdigest()
-    with tempfile.TemporaryDirectory(prefix='reignhub-packaging-') as temp:
-        bundle = Path(temp) / 'reignhub-server-packaging'
-        (bundle / 'Formula').mkdir(parents=True)
-        (bundle / 'bucket').mkdir()
-        formula = ['class ReignhubServer < Formula', '  desc "Self-hosted ReignHub pairing, encrypted relay, Web console and TCP/UDP discovery"',
-                   '  homepage "https://reignhub.app"', f'  version "{release_version}"', '  license "MIT"']
-        for os_name, ruby_os in (('darwin', 'macos'), ('linux', 'linux')):
-            formula.append(f'  on_{ruby_os} do')
-            for arch, condition in (('arm64', 'Hardware::CPU.arm?'), ('amd64', 'Hardware::CPU.intel?')):
-                asset_url, digest = url(os_name, arch)
-                formula.extend([f'    if {condition}', f'      url "{asset_url}"', f'      sha256 "{digest}"', '    end'])
-            formula.append('  end')
-        formula.extend(['  def install', '    bin.install "reignhub-server"', '    require "json"', '    config = JSON.parse(File.read("config.json"))', '    config.fetch("services").fetch("control")["database"] = (var/"lib/reignhub-server/reignhub.db").to_s', '    File.write("config.json", JSON.pretty_generate(config))', '    (etc/"reignhub-server").install "config.json" unless (etc/"reignhub-server/config.json").exist?',
-                        '  end', '  service do', '    run [opt_bin/"reignhub-server", "--config", etc/"reignhub-server/config.json"]',
-                        '    keep_alive true', '    working_dir var', '    log_path var/"log/reignhub-server.log"', '    error_log_path var/"log/reignhub-server.log"', '  end',
-                        '  test do', '    assert_match version.to_s, shell_output("#{bin}/reignhub-server --version")', '  end', 'end', ''])
-        (bundle / 'Formula/reignhub-server.rb').write_text('\n'.join(formula))
-        scoop = {'version': release_version, 'description': 'Standalone ReignHub service with embedded Web and TCP/UDP discovery', 'homepage': 'https://reignhub.app', 'license': 'MIT', 'architecture': {}, 'bin': 'reignhub-server.exe', 'persist': ['data', 'config.json'],
-                 'notes': 'Start reignhub-server --config "$persist_dir\\config.json". Open HTTP TCP 26330 and TCP/UDP 26331 (discovery) and 26332 (native relay) in your firewall.'}
-        for arch, scoop_arch in (('amd64', '64bit'), ('arm64', 'arm64')):
-            asset_url, digest = url('windows', arch)
-            scoop['architecture'][scoop_arch] = {'url': asset_url, 'hash': digest, 'extract_dir': archives[('windows', arch)].name.removesuffix('.zip')}
-        (bundle / 'bucket/reignhub-server.json').write_text(json.dumps(scoop, indent=2) + '\n')
-        for name in ('install-server.sh',):
-            shutil.copy2(ROOT / 'scripts/platform' / name, bundle / name)
-        (bundle / 'README.md').write_text('These definitions are generated from this exact release and verified SHA-256 digests.\n\nHomebrew: create a local tap with `brew tap-new reignhub/local`, copy Formula/reignhub-server.rb to `$(brew --repository reignhub/local)/Formula/`, then run `brew install reignhub/local/reignhub-server` and `brew services start reignhub-server`.\nScoop: `scoop install ./bucket/reignhub-server.json`.\nMaintainers may copy Formula/ to a Homebrew tap and bucket/ to a Scoop bucket. Neither registry is published by this build.\n')
-        archive = output / f'reignhub-server-packaging-{release_version}.tar.gz'
-        with tarfile.open(archive, 'w:gz') as tar:
-            tar.add(bundle, arcname=bundle.name)
-        checksum(archive)
 
 
 def main():
@@ -99,7 +60,6 @@ def main():
         html = (assets / 'index.html').read_text().replace('href="/icon.svg"', 'href="/assets/chat/icon.svg"')
         (assets / 'index.html').write_text(html)
         shutil.copy2(ROOT / 'apps/site/app/icon.svg', assets / 'icon.svg')
-        archives = {}
         for os_name, arch in targets:
             name = f'reignhub-server-{args.version}-{os_name}-{arch}'
             bundle = Path(temp) / name
@@ -117,10 +77,7 @@ def main():
                 with tarfile.open(archive, 'w:gz') as tar:
                     tar.add(bundle, arcname=name)
             checksum(archive)
-            archives[(os_name, arch)] = archive
             print(f'{archive} ({archive.stat().st_size / 1048576:.1f} MiB)', flush=True)
-        if set(targets) == set(TARGETS):
-            package_managers(output, args.version, archives)
 
 
 if __name__ == '__main__':
