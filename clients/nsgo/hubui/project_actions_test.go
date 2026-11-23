@@ -67,6 +67,48 @@ func TestCollapsedGroupsCarryUnreadToVisibleParent(t *testing.T) {
 	}
 }
 
+func TestCollapsedSectionDotSharesTrailingActions(t *testing.T) {
+	app := nsgotest.Start(t, func(cx *core.Scope) core.Node {
+		s := newState(cx, newDemoAPI())
+		s.collapsed["section:all"] = true
+		section := directoryRow{ID: "section:all", Kind: "section", Section: "all", Title: "Projects", Unread: true}
+		return core.View{Style: core.Style{Width: core.Pt(300), Padding: core.All(40)}, Children: []core.Node{
+			s.treeHeader(cx, func() directoryRow { return section }, &listTouchBrake{}),
+			button(cx, "outside-section", "Outside section", nil, "ghost", func() {}),
+		}}
+	}, nsgotest.Size(900, 700), nsgotest.Environment(core.Environment{OS: core.OSWindows, Idiom: core.IdiomDesktop}))
+
+	const status = "id:section:all-status"
+	const filter = "id:session-filters"
+	dot := globalBounds(app.Find("id:unread-section:all"))
+	button := globalBounds(app.Find(filter))
+	if dot.Origin.X <= button.Origin.X || dot.Origin.X+dot.Size.Width >= button.Origin.X+button.Size.Width {
+		t.Fatal("unread dot is outside the trailing action slot")
+	}
+	if app.Find(status).Style.Opacity == 0 || app.Find(filter).Style.Opacity != 0 {
+		t.Fatal("section should show the unread dot at rest")
+	}
+	// The desktop test surfaces exercise native focus. The headless run
+	// drives the pointer without relying on the OS cursor's position.
+	nativeFocus := nsgotest.Target() == "windows" || nsgotest.Target() == "macos"
+	if nativeFocus {
+		app.Focus("id:section:all")
+	} else {
+		app.HoverAt("id:section:all", core.Point{X: 22, Y: 16})
+	}
+	app.WaitUntil(time.Second, func() bool {
+		return app.Find(status).Style.Opacity == 0 && app.Find(filter).Style.Opacity != 0
+	})
+	if nativeFocus {
+		app.Focus("id:outside-section")
+	} else {
+		app.HoverOut()
+	}
+	app.WaitUntil(time.Second, func() bool {
+		return app.Find(status).Style.Opacity != 0 && app.Find(filter).Style.Opacity == 0
+	})
+}
+
 func TestCollapsedUnreadRespectsFiltersAndGrouping(t *testing.T) {
 	nsgotest.Start(t, func(cx *core.Scope) core.Node {
 		s := sidebarInteractionFixture(cx)

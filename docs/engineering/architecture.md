@@ -182,4 +182,6 @@ A host becomes remotely ready only after obtaining a valid service identity and 
 
 Local pairing permission, signed service leases and optional commercial policy are separate boundaries. Validate authorization on direct and relay paths. Distinguish network failure, expired authorization and unavailable Agent capabilities; account-free deployments must not suggest signing in to fix ordinary network errors.
 
+The host records the time it receives the local Accept action and persists it with the controller grant. Password-based approval records the time the host accepts the request automatically. Local `host.info` exposes that timestamp. The controller list shows the latest approvals first and displays their times in the local time zone. Existing grants without an approval timestamp follow dated grants, and the controller ID breaks ties.
+
 Record cross-cutting changes in [decisions](decisions.md), including lifecycle, persistence, runtime and verification effects. Internal testing permits direct protocol/cache redesign; identity preservation and failure recovery remain required.

@@ -146,6 +146,12 @@ resizing; individual buttons must not choose arbitrary sides. Rich information
 panels may deliberately open toward the content area (for example, sidebar
 session/project details), but action hints keep the same top/bottom policy.
 
+Terminal tab hints show the shell type and full path as separate icon-and-text
+rows. Keep the last path reported in the terminal title and fall back to the
+session's launch directory. Add the current program-supplied title as a third
+row when it contains additional information, such as a tool name. The title is
+display metadata. Wrap long values inside the hint and update them in place.
+
 Validate the resting, hovered, focused, expanded, empty, pending and failed states,
 and the equivalent touch workflow, in light/dark and narrow/wide layouts. These
 rules apply to lists, trees, cards and toolbars throughout the product.
@@ -184,17 +190,25 @@ Every clickable control, including icon buttons, list actions, toolbar controls 
   motion. This synchronization communicates activity, not equal task progress.
 - Manual refresh shows local pending feedback until its request finishes, even when the response contains no changes. Automatic refresh stays visually quiet: it does not animate or disable the manual refresh button or repeatedly announce loading. Preserve existing list content and reading position. A manual refresh supersedes an older background read; stale background results cannot overwrite it.
 
-Use the controller's shared [action controls](../../clients/nsgo/hubui/actions.go) and the website/account [Button](../../packages/account-ui/src/ui.tsx) instead of duplicating pending-state handling. Async button handlers return their operation promise so feedback covers the full request and follow-up refresh. Custom clickable rows also need pressed and focus states; selected appearance does not replace press feedback. Use resource IDs as list keys when actions can remove or reorder rows.
+Use the controller's shared [action controls](../../clients/nsgo/hubui/actions.go) and the website/account [Button](../../packages/account-ui/src/ui.tsx) instead of duplicating pending-state handling. Async button handlers return their operation promise so feedback covers the full request and follow-up refresh. Custom clickable rows also need pressed and focus states; selected appearance does not replace press feedback.
 
 Copy confirmations last two seconds on the scoped UI clock. Repeating a copy
 restarts that lifetime; the old timer must not clear the replacement confirmation,
 and disposing the workspace cancels its pending timer.
+
+## Refreshing lists
+
+- Define a deterministic order with a stable resource ID as the final tie-breaker. Preserve relative order across equivalent snapshots. Reorder a surviving row only when the selected sort or a field that participates in it changes. Normalize unordered responses before binding them to a list.
+- Key rows and their actions by resource identity. Treat equivalent snapshots as a no-op for rendering. Keep row and control instances mounted while changing their labels, icons and availability in place. Bind dynamic branches to the specific values that change their structure.
+- Preserve hover, keyboard focus, scroll position and pending feedback during background refresh. Verify those behaviors with repeated equivalent snapshots in different orders and a metadata change, then verify that real membership or action changes still appear.
 
 ## Dialogs and notification layers
 
 Modal dialogs place an accessible X close control at the top right, reachable in normal, pending, failed and expired states. Keep the footer to at most two decision buttons by default; extra actions need a specific workflow reason. Do not add a third footer button merely to make the dialog dismissible. Informational or expired dialogs may have no footer actions. Use the shared dialog header; custom modal layouts follow the same placement.
 
 Dismissal never implies consent. Expired or withdrawn requests stop offering invalid actions and explain how to start a fresh request; ordinary failures keep a usable retry and close path. Keyboard, back and backdrop behavior must agree with the visible controls. A dismissed request must not immediately reopen without a new user action or request.
+
+Incoming remote-control authorization opens above any current workspace dialog. Keep the underlying dialog mounted with its draft and return to it when the authorization dialog closes. Only the top dialog handles modal input.
 
 Global errors and notifications render above dialog backdrops using the framework's overlay layer, not a larger page-local z-index. Notification actions remain clickable while a dialog is open. The empty area around a notification passes input through without dismissing or blocking the dialog; opening, updating and closing notifications must preserve dialog state, drafts and focus. Check both stacking order and hit testing with a modal present. Keep notifications within the safe viewport on narrow screens.
 
@@ -344,6 +358,8 @@ parents leave the indicator on their visible descendants; expanding is not a
 read acknowledgement. Apply each section's filters and pinned membership before
 aggregation, and propagate through project, Agent and device levels. Opening a
 conversation clears both its row markers and any affected parent markers.
+On desktop, a collapsed section shows its unread dot in the far-right action
+slot at rest. Hover and keyboard focus reveal the filter action in that slot.
 Initial historical rows, failed/interrupted work,
 unknown state and offline cache never fabricate successful completion. Each
 Provider route tracks its own transitions so an idle duplicate cannot settle

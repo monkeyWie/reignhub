@@ -28,6 +28,12 @@ func ErrorCode(err error) string {
 	if errors.Is(err, terminal.ErrDetached) {
 		return "TERMINAL_DETACHED"
 	}
+	if errors.Is(err, terminal.ErrClosing) {
+		return "TERMINAL_CLOSING"
+	}
+	if errors.Is(err, terminal.ErrCloseUnconfirmed) {
+		return "TERMINAL_CLOSE_UNCONFIRMED"
+	}
 	if OutcomeUnknown(err) {
 		return WriteOutcomeUnknown
 	}

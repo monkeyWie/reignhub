@@ -75,11 +75,11 @@ func TestTerminalDispatchAuthorizationAndTrustedDirectory(t *testing.T) {
 	if out := d.HandleRequest(ctx, r); out.Error == "" || gotDir != "" {
 		t.Fatal("invalid cwd reached factory", out)
 	}
-	for _, method := range []string{"terminal.profiles", "terminal.openProfile", "terminal.open", "terminal.attach", "terminal.read", "terminal.input", "terminal.resize", "terminal.close"} {
+	for _, method := range []string{"terminal.profiles", "terminal.openProfile", "terminal.open", "terminal.attach", "terminal.read", "terminal.input", "terminal.resize", "terminal.close", "terminal.closeStatus"} {
 		if ReadOnly(method) {
 			t.Fatal("terminal traffic must not be cached", method)
 		}
-		if CancellableRead(method) != (method == "terminal.read" || method == "terminal.profiles") {
+		if CancellableRead(method) != (method == "terminal.read" || method == "terminal.profiles" || method == "terminal.closeStatus") {
 			t.Fatal("wrong cancellation policy", method)
 		}
 	}

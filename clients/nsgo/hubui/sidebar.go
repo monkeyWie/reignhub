@@ -138,6 +138,7 @@ func (s *State) treeHeader(cx *core.Scope, item func() directoryRow, brake *list
 		}}
 	}
 	if data.Kind == "section" {
+		filtersOpen := core.NewSignal(cx, false)
 		trigger := core.View{TestID: data.ID, Role: core.RoleButton, LabelFunc: headerLabel, Expanded: func() bool { s.read(); return !s.collapsed[key] },
 			OnPress: func(core.PressEvent) {
 				brake.action(func() { s.collapsed[key] = !s.collapsed[key]; s.saveSidebarPreferences() })()
@@ -161,9 +162,20 @@ func (s *State) treeHeader(cx *core.Scope, item func() directoryRow, brake *list
 						}
 						return contextualAffordance(cx, "directory-section", true)
 					}},
-				spacer(), unreadIndicator(),
+				spacer(), core.Show{When: func() bool { return !cx.Env().Desktop() }, Then: func(cx *core.Scope) core.Node {
+					return unreadIndicator()
+				}},
 			}}
-		children := []core.Node{trigger, s.sessionFiltersButton(cx, data.Section)}
+		children := []core.Node{trigger, s.sessionFiltersButton(cx, data.Section, filtersOpen, unread),
+			core.Show{When: func() bool { return cx.Env().Desktop() && !filtersOpen.Get() && unread() }, Then: func(cx *core.Scope) core.Node {
+				hidden := &core.Style{Opacity: core.Alpha(0)}
+				return core.View{TestID: data.ID + "-status", PointerEvents: core.PointerEventsNone,
+					Style: core.Style{Position: core.Absolute, Right: core.Pt(0), Top: core.Pt(0), Bottom: core.Pt(0), Width: core.Pt(32),
+						AlignItems: core.AlignCenter, JustifyContent: core.JustifyCenter,
+						GroupStyle: &core.GroupStyle{Name: "directory-section", Hover: hidden, FocusWithin: hidden}},
+					Children: []core.Node{unreadDot(cx, data.ID, locales.For(cx).SessionCompletedUnread())}}
+			}},
+		}
 		return core.View{Style: core.Style{Group: "directory-section", Direction: core.Row, AlignItems: core.AlignCenter, Margin: core.Edges{Top: 8, Left: 8, Right: 12}}, Children: children}
 	}
 	menuOpen, tipOpen := core.NewSignal(cx, false), core.NewSignal(cx, false)

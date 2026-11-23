@@ -296,12 +296,17 @@ already configured shared backend.
 ### Desktop WebSocket fallback
 
 The local Agent list exposes Start Codex or Restart Codex on Windows and
-macOS when IPC setup fails or an existing router cannot reach a held thread.
+macOS when IPC setup fails, an existing router cannot reach a held thread,
+or the shared backend needs the desktop to relaunch. The action is hidden
+while the shared WebSocket connection is healthy.
 Other sessions remain available while recovery is offered. Restart validates
 the approved process generations and accepts those that have already exited.
-Windows distinguishes Electron helper processes using their process type,
-waits on the approved main process handles, and uses WM_CLOSE for orderly
-shutdown. A main process that remains in the tray must quit before launch.
+Closing the last window on Windows leaves Codex running in the tray. The Windows
+restart dialog discloses that confirming will forcibly stop Codex. ReignHub
+validates the approved main processes by executable path and creation time and
+retains their Win32 handles for termination and a bounded wait. Discovery filters
+out Electron helper processes. If a new main process appears before launch,
+ReignHub asks the user to refresh and confirm again.
 macOS uses NSRunningApplication and NSWorkspace to discover, quit, and
 launch the app. Both platforms supply the WebSocket override through the
 new process environment. Only the local desktop can use host.activate.
@@ -312,8 +317,9 @@ authentication to the upstream server. The desktop URL contains a random
 per-launch credential because the desktop override supplies a URL without
 auth headers. The listener rejects browser Origins and unrecognized paths.
 Neither the URL nor credentials appear in status, logs or diagnostics.
-The provider reports connected only after the desktop initialize exchange
-succeeds for the current launch.
+The provider reports connected after forwarding a successful response to the
+desktop's initialize request for the current launch. Desktop versions can
+proceed with requests without sending an `initialized` notification.
 
 The shared connection handles reads, new sessions, sends, interruption and
 server requests delivered to the ReignHub connection. Watches subscribe to
@@ -328,8 +334,10 @@ process remains open. The App needs a new launch after that backend ends.
 The opt-in TestSharedCodexServerWithBundledCLI uses a temporary Codex home
 and a compatible executable supplied through REIGNHUB_TEST_SHARED_CODEX_CLI.
 It verifies authentication, independent initialization, shared thread reads
-and readiness recovery without launching the desktop App. Windows Store
-activation and graceful termination require validation on an installed build.
+and readiness after a replacement desktop connects without an `initialized`
+notification. Windows restart tests exercise process generation validation and
+termination against a disposable child. Windows Store launch requires
+validation with the desktop App.
 The local fallback uses the existing encrypted endpoint and local activation
 contracts. Go service and Cloudflare Worker forwarding require no changes.
 

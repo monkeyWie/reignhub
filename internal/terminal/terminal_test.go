@@ -156,6 +156,64 @@ func TestTerminalCloseBeforeDelayedOpen(t *testing.T) {
 		t.Fatal("delayed open started after explicit close", err)
 	}
 }
+
+type asynchronousCloseEngine struct {
+	*fixtureEngine
+	started chan struct{}
+	calls   atomic.Int32
+}
+
+func (e *asynchronousCloseEngine) Close() error {
+	if e.calls.Add(1) == 1 {
+		close(e.started)
+	}
+	return nil
+}
+
+func TestTerminalCloseWaitsForExitAndRetainsScopedConfirmation(t *testing.T) {
+	engine := &asynchronousCloseEngine{fixtureEngine: newFixtureEngine(), started: make(chan struct{})}
+	m := New(context.Background(), func(context.Context, string, Size, string) (Engine, error) { return engine, nil })
+	t.Cleanup(func() { _ = m.Close() })
+	t.Cleanup(func() { _ = engine.fixtureEngine.Close() })
+	scope := Scope{"owner", "agent", "conversation"}
+	p := Params{ID: strings.Repeat("ab", 32), Size: Size{Cols: 80, Rows: 24}}
+	snapshot := openFixture(t, m, scope, p)
+	if err := m.CloseStatus(context.Background(), scope, p); !errors.Is(err, ErrCloseUnconfirmed) {
+		t.Fatal("confirmed a close that never arrived", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	request, disconnect := context.WithCancel(ctx)
+	defer disconnect()
+	done := make(chan error, 1)
+	go func() { done <- m.Terminate(request, scope, p) }()
+	select {
+	case <-engine.started:
+	case <-ctx.Done():
+		t.Fatal("termination never reached the engine")
+	}
+	p.Attachment, p.After = snapshot.Attachment, snapshot.Sequence
+	if _, err := m.Read(ctx, scope, p); !errors.Is(err, ErrClosing) {
+		t.Fatal("in-progress close should be distinct from a missing terminal", err)
+	}
+	probe, stop := context.WithTimeout(ctx, 20*time.Millisecond)
+	defer stop()
+	if err := m.CloseStatus(probe, scope, p); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatal("confirmed before the process exited", err)
+	}
+	disconnect()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatal("close request could not stop waiting", err)
+	}
+	_ = engine.fixtureEngine.Close()
+	if err := m.CloseStatus(ctx, scope, p); err != nil || engine.calls.Load() != 1 {
+		t.Fatal("exit was not confirmed without a second close", err)
+	}
+	other := Scope{"another-owner", scope.Provider, scope.Session}
+	if err := m.CloseStatus(ctx, other, p); !errors.Is(err, ErrMissing) {
+		t.Fatal("close acknowledgement leaked to another owner", err)
+	}
+}
 func TestTerminalCreationLimitsAndRetryAfterFailure(t *testing.T) {
 	m, _, s, p, _ := fixture(t)
 	_, err := m.Open(context.Background(), s, p, func(context.Context) (string, error) { return "", errors.New("missing directory") })

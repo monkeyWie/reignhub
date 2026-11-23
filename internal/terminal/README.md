@@ -33,8 +33,11 @@ failed setup can be retried. Retired IDs are retained, so a delayed open cannot
 recreate a terminated process. Setup has a ten-second host context and continues
 when the user switches tabs during startup. Hiding, switching tabs or conversations,
 or losing the connection detaches the view and preserves the shell. Closing a
-tab or using Kill Terminal ends that shell. The controller removes its tab after
-the host acknowledges termination. Host application shutdown closes all shells and
+tab or using Kill Terminal ends that shell. The host waits for engine exit before
+recording a scoped termination acknowledgement. Accepted cleanup continues if the
+request disconnects. If the acknowledgement is lost, the controller checks the
+host's close status without replaying the write. The tab stays visible when the
+host cannot confirm termination. Host application shutdown closes all shells and
 waits under one two-second deadline. Shells and panel state do not survive app
 restart. No real Agent process is terminated by this manager.
 

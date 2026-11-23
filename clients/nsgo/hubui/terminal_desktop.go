@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -130,15 +131,28 @@ func (s *State) closeTerminal(p *terminalPanel, tab *terminalTab, reopen bool) {
 	s.changed()
 	go func() {
 		ctx, cancel := context.WithTimeout(s.ctx, 8*time.Second)
-		defer cancel()
-		_, err := call(ctx, "terminal.close", model.Params{ID: id})
+		params := model.Params{ID: id}
+		_, err := call(ctx, "terminal.close", params)
+		var response *control.ResponseError
+		unconfirmed := err != nil && (ctx.Err() != nil || transportError(err) || control.OutcomeUnknown(err) ||
+			errors.Is(err, model.ErrCloseUnconfirmed) || errors.As(err, &response) && response.Code == "TERMINAL_CLOSE_UNCONFIRMED")
+		cancel()
+		if unconfirmed && s.ctx.Err() == nil {
+			status, stop := context.WithTimeout(s.ctx, 3*time.Second)
+			_, err = call(status, "terminal.closeStatus", params)
+			stop()
+		}
 		s.cx.Post(func() {
 			tab.closing = false
 			switch {
 			case err != nil:
 				tab.closeError = err.Error()
+				if unconfirmed {
+					tab.closeError = locales.For(s.cx).TerminalCloseUnconfirmed()
+				}
 			case reopen:
 				tab.id, tab.title, tab.openDone = device.Random(), "", nil
+				tab.reportedPath, tab.reportedShell = "", ""
 				tab.revision++
 			default:
 				i := slices.Index(p.tabs, tab)
@@ -249,10 +263,9 @@ func (s *State) terminalContent(cx *core.Scope, p *terminalPanel, tab *terminalT
 			}
 			create = false
 			t, err := terminal.New(terminal.Options{Conn: conn, ResizeByConn: true, Scrollback: 512 << 10, OnTitle: func(title string) {
-				title = navigationSnippet(title, 96)
+				title = strings.TrimSpace(title)
 				post(func() {
-					if tab.title != title {
-						tab.title = title
+					if tab.setTitle(title) {
 						s.changed()
 					}
 				})
@@ -319,7 +332,10 @@ func (s *State) terminalContent(cx *core.Scope, p *terminalPanel, tab *terminalT
 		core.Show{When: busy.Get, Then: func(cx *core.Scope) core.Node {
 			return s.loadingRing("terminal-connecting", locales.For(cx).TerminalConnecting(), 12)
 		}},
-		core.Show{When: func() bool { return problem.Get() != "" || exited.Get() }, Then: func(cx *core.Scope) core.Node {
+		core.Show{When: func() bool {
+			s.read()
+			return !tab.closing && (problem.Get() != "" || exited.Get())
+		}, Then: func(cx *core.Scope) core.Node {
 			status := dynamicText(cx, func() string {
 				if err := problem.Get(); err != "" {
 					return err
@@ -335,7 +351,9 @@ func (s *State) terminalContent(cx *core.Scope, p *terminalPanel, tab *terminalT
 				v.Disabled = func() bool { s.read(); return tab.closing || busy.Get() }
 				return v
 			})
-			return core.View{TestID: "terminal-error", Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Padding: core.Symmetric(2, 12), Gap: 6}, Children: []core.Node{status, reconnect}}
+			return core.View{TestID: "terminal-error", Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Padding: core.Symmetric(2, 12), Gap: 6}, Children: []core.Node{
+				core.Show{When: func() bool { s.read(); return tab.closeError == "" }, Then: func(*core.Scope) core.Node { return status }}, reconnect,
+			}}
 		}},
 		core.Dynamic(func(cx *core.Scope) core.Node {
 			t := live.Get()
@@ -361,13 +379,13 @@ func terminalGone(err error) bool {
 	return errors.Is(err, model.ErrMissing) || errors.As(err, &response) && response.Code == "TERMINAL_GONE"
 }
 func retryTerminalConnection(err error) bool {
-	if errors.Is(err, model.ErrInputUnconfirmed) || terminalGone(err) || errors.Is(err, model.ErrDetached) {
+	if errors.Is(err, model.ErrInputUnconfirmed) || terminalGone(err) || errors.Is(err, model.ErrDetached) || errors.Is(err, model.ErrClosing) {
 		return false
 	}
 	var response *control.ResponseError
 	if errors.As(err, &response) {
 		switch response.Code {
-		case "TERMINAL_DENIED", "TERMINAL_DETACHED", "TERMINAL_UNSUPPORTED", control.ConnectionAuthorizationExpired:
+		case "TERMINAL_DENIED", "TERMINAL_DETACHED", "TERMINAL_CLOSING", "TERMINAL_UNSUPPORTED", control.ConnectionAuthorizationExpired:
 			return false
 		}
 	}

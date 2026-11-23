@@ -33,11 +33,6 @@ func ProcessStamp(ctx context.Context, pid int) (string, string, error) {
 }
 
 func processStamp(h windows.Handle) (string, string, error) {
-	buf := make([]uint16, 32768)
-	size := uint32(len(buf))
-	if err := windows.QueryFullProcessImageName(h, 0, &buf[0], &size); err != nil {
-		return "", "", err
-	}
 	var created, exited, kernel, user windows.Filetime
 	if err := windows.GetProcessTimes(h, &created, &exited, &kernel, &user); err != nil {
 		return "", "", err
@@ -45,8 +40,22 @@ func processStamp(h windows.Handle) (string, string, error) {
 	if exited.HighDateTime != 0 || exited.LowDateTime != 0 {
 		return "", "", errProcessExited
 	}
+	buf := make([]uint16, 32768)
+	size := uint32(len(buf))
+	if err := windows.QueryFullProcessImageName(h, 0, &buf[0], &size); err != nil {
+		return "", "", processProbeError(h, err)
+	}
 	stamp := uint64(created.HighDateTime)<<32 | uint64(created.LowDateTime)
 	return strconv.FormatUint(stamp, 10), windows.UTF16ToString(buf[:size]), nil
+}
+
+func processProbeError(handle windows.Handle, err error) error {
+	const stillActive = 259
+	var code uint32
+	if windows.GetExitCodeProcess(handle, &code) == nil && code != stillActive {
+		return errProcessExited
+	}
+	return err
 }
 
 // Discover is passive and matches full executable paths. Electron subprocesses
@@ -117,7 +126,7 @@ func desktopProcess(pid int, executable string, sid *windows.SID) (string, strin
 	}
 	var token windows.Token
 	if err := windows.OpenProcessToken(handle, windows.TOKEN_QUERY, &token); err != nil {
-		return "", "", err
+		return "", "", processProbeError(handle, err)
 	}
 	defer token.Close()
 	user, err := token.GetTokenUser()
@@ -126,10 +135,7 @@ func desktopProcess(pid int, executable string, sid *windows.SID) (string, strin
 	}
 	helper, err := electronHelper(handle)
 	if err != nil {
-		if _, _, status := processStamp(handle); errors.Is(status, errProcessExited) {
-			return "", "", status
-		}
-		return "", "", err
+		return "", "", processProbeError(handle, err)
 	}
 	if helper {
 		return "", "", nil
@@ -141,16 +147,19 @@ func desktopProcess(pid int, executable string, sid *windows.SID) (string, strin
 // type distinguishes them even after the parent is missing from the snapshot.
 func electronHelper(handle windows.Handle) (bool, error) {
 	// Windows command lines are bounded to 32,767 UTF-16 code units.
-	var buffer [65536 + unsafe.Sizeof(windows.NTUnicodeString{})]byte
+	var buffer struct {
+		command windows.NTUnicodeString
+		text    [32768]uint16
+	}
 	var size uint32
-	if err := windows.NtQueryInformationProcess(handle, windows.ProcessCommandLineInformation, unsafe.Pointer(&buffer[0]), uint32(len(buffer)), &size); err != nil {
+	if err := windows.NtQueryInformationProcess(handle, windows.ProcessCommandLineInformation, unsafe.Pointer(&buffer), uint32(unsafe.Sizeof(buffer)), &size); err != nil {
 		return false, err
 	}
-	command := (*windows.NTUnicodeString)(unsafe.Pointer(&buffer[0]))
-	if command.Buffer == nil || command.Length == 0 {
+	command := buffer.command
+	if command.Buffer != &buffer.text[0] || command.Length == 0 || command.Length%2 != 0 {
 		return false, errors.New("Windows 未返回进程启动参数")
 	}
-	args, err := windows.DecomposeCommandLine(windows.UTF16ToString(unsafe.Slice(command.Buffer, int(command.Length)/2)))
+	args, err := windows.DecomposeCommandLine(windows.UTF16ToString(buffer.text[:int(command.Length)/2]))
 	if err != nil {
 		return false, err
 	}

@@ -238,6 +238,7 @@ func (s *State) workspaceView(cx *core.Scope) core.Node {
 		}},
 		s.noticeOverlay(cx),
 		core.Dynamic(func(cx *core.Scope) core.Node { return s.dialogView(cx, s.dialog.Get()) }),
+		s.hostAuthorizationLayer(),
 	}})
 }
 

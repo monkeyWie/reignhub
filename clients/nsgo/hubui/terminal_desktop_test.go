@@ -31,6 +31,9 @@ type terminalUIFaultAPI struct {
 	API
 	failRead       atomic.Bool
 	attachFailures atomic.Int32
+	loseClose      bool
+	closeWrites    atomic.Int32
+	closeReads     atomic.Int32
 }
 
 func (a *terminalUIFaultAPI) Call(ctx context.Context, method string, p Object, target string, r Object) (any, error) {
@@ -41,6 +44,16 @@ func (a *terminalUIFaultAPI) Call(ctx context.Context, method string, p Object, 
 		if str(r, "method") == "terminal.attach" && a.attachFailures.Load() > 0 {
 			a.attachFailures.Add(-1)
 			return nil, errors.New("fixture reconnect temporarily unavailable")
+		}
+		if str(r, "method") == "terminal.close" && a.loseClose {
+			a.closeWrites.Add(1)
+			if _, err := a.API.Call(ctx, method, p, target, r); err != nil {
+				return nil, err
+			}
+			return nil, context.DeadlineExceeded
+		}
+		if str(r, "method") == "terminal.closeStatus" {
+			a.closeReads.Add(1)
 		}
 	}
 	return a.API.Call(ctx, method, p, target, r)
@@ -72,6 +85,74 @@ func TestTerminalPanelTransientReconnect(t *testing.T) {
 	}
 	app.Key("z")
 	app.WaitUntil(time.Second, func() bool { e.mu.Lock(); defer e.mu.Unlock(); return e.input == "z" })
+}
+
+func TestTerminalTabTooltipShowsShellFullPathAndActivity(t *testing.T) {
+	shellPath := `C:\Program Files\WindowsApps\Microsoft.PowerShell_7.6.0.0_x64__8wekyb3d8bbwe\` + strings.Repeat(`nested directory\`, 5) + "pwsh.exe"
+	var s *State
+	tab := &terminalTab{}
+	tab.setTitle(shellPath)
+	app := nsgotest.Start(t, func(cx *core.Scope) core.Node {
+		s = newState(cx, newDemoAPI())
+		tip := s.terminalTabTooltip(cx, tab)
+		tip.Open = func() bool { return true }
+		trigger := button(cx, "terminal-hint-fixture", "Terminal", nil, "ghost", nil).(core.View)
+		trigger.Tooltip = tip
+		return core.View{Style: core.Style{Padding: core.Edges{Top: 180, Left: 20, Right: 20}}, Children: []core.Node{trigger}}
+	}, nsgotest.Size(380, 520), nsgotest.Environment(core.Environment{OS: core.OSWindows, Idiom: core.IdiomDesktop}))
+	shell := app.Find("id:terminal-info-type").Children[1]
+	location := app.Find("id:terminal-info-path").Children[1]
+	if shell.Text != "PowerShell" || location.Text != shellPath {
+		t.Fatalf("wrong shell details: %q, %q", shell.Text, location.Text)
+	}
+	top, bottom := shell.Bounds(), location.Bounds()
+	if top.Origin.X != bottom.Origin.X || top.Origin.Y+top.Size.Height > bottom.Origin.Y ||
+		bottom.Size.Height <= 18 || bottom.Origin.X+bottom.Size.Width > 380 {
+		t.Fatalf("terminal path should wrap beneath the shell type inside the window: %v, %v", top, bottom)
+	}
+	pathRow := app.Find("id:terminal-info-path").ID
+	app.Post(func() { tab.setTitle("rsbuild-node"); s.changed() })
+	app.WaitFor("id:terminal-info-activity", time.Second)
+	if app.Find("id:terminal-info-activity").Children[1].Text != "rsbuild-node" || app.Find("id:terminal-info-path").Children[1].Text != shellPath {
+		t.Fatal("activity title replaced or failed to show alongside the path")
+	}
+	activityRow := app.Find("id:terminal-info-activity").ID
+	app.Post(func() {
+		tab.setTitle("vite")
+		s.changed()
+	})
+	app.WaitFor("text:vite", time.Second)
+	if app.Find("id:terminal-info-activity").ID != activityRow {
+		t.Fatal("title update replaced the activity row")
+	}
+	app.Post(func() { tab.setTitle(`D:\Project Folder\fixture`); s.changed() })
+	app.WaitUntil(time.Second, func() bool { return !app.Exists("id:terminal-info-activity") })
+	app.Find(`text:D:\Project Folder\fixture`)
+	if app.Find("id:terminal-info-path").ID != pathRow {
+		t.Fatal("terminal metadata update rebuilt the tooltip row")
+	}
+}
+
+func TestTerminalCloseRecoversLostAcknowledgement(t *testing.T) {
+	engine := &terminalUITestEngine{dirty: true, done: make(chan struct{})}
+	manager := model.New(context.Background(), func(context.Context, string, model.Size, string) (model.Engine, error) { return engine, nil })
+	t.Cleanup(func() { _ = manager.Close() })
+	dispatcher := &control.Dispatcher{Terminals: manager, Providers: map[string]provider.Provider{"pi": terminalUITestProvider{dir: t.TempDir()}}}
+	var api *terminalUIFaultAPI
+	app := nsgotest.Start(t, func(cx *core.Scope) core.Node {
+		s := workspaceLayoutFixture(cx)
+		s.providers = []Object{{"id": "pi", "capabilities": Object{"terminal": true}}}
+		api = &terminalUIFaultAPI{API: &terminalUITestAPI{s.api, dispatcher}, loseClose: true}
+		s.api = api
+		return s.workspaceView(cx)
+	}, nsgotest.Size(1200, 900), nsgotest.Environment(core.Environment{OS: core.OSWindows, Idiom: core.IdiomDesktop}))
+	app.Press("id:terminal-toggle")
+	app.WaitFor("id:conversation-terminal", 4*time.Second)
+	app.Press("id:terminal-close-1")
+	app.WaitUntil(time.Second, func() bool { return !app.Exists("id:terminal-pane") })
+	if api.closeWrites.Load() != 1 || api.closeReads.Load() != 1 {
+		t.Fatal("close must be sent once and confirmed by a read")
+	}
 }
 
 func (e *terminalUITestEngine) Resize(model.Size) { e.mu.Lock(); e.dirty = true; e.mu.Unlock() }

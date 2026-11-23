@@ -480,7 +480,8 @@ func (s *State) composer(cx *core.Scope) core.Node {
 		// Focus after the restored draft and enabled editor reach the platform.
 		// This scope belongs to the entry, so navigation cancels a pending focus.
 		cx.Post(func() {
-			if s.key() == key && s.sessionGeneration == generation && s.draftReady() && s.dialog.GetUntracked() == "" && !s.terminalVisible() {
+			if s.key() == key && s.sessionGeneration == generation && s.draftReady() &&
+				s.dialog.GetUntracked() == "" && s.hostAuthorization.GetUntracked() == "" && !s.terminalVisible() {
 				input.Focus()
 			}
 		})

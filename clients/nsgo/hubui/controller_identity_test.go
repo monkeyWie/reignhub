@@ -92,6 +92,70 @@ func TestControllerIdentityRows(t *testing.T) {
 	}
 }
 
+func TestAuthorizedControllersStayStableDuringRefresh(t *testing.T) {
+	var s *State
+	phone := Object{"client": "z-phone", "name": "Phone", "kind": "native", "platform": "android", "authorizedAt": int64(1795000000000)}
+	laptop := Object{"client": "a-laptop", "name": "Laptop", "kind": "native", "platform": "windows"}
+	app := nsgotest.Start(t, func(cx *core.Scope) core.Node {
+		s = newState(cx, newDemoAPI())
+		s.host = Object{"grants": []Object{phone, laptop}}
+		s.dialog.Set("local-access")
+		return core.Dynamic(func(cx *core.Scope) core.Node { return s.dialogView(cx, s.dialog.Get()) })
+	}, nsgotest.Size(920, 720), nsgotest.Environment(core.Environment{Idiom: core.IdiomDesktop}))
+
+	const revoke = "id:revoke-z-phone"
+	const other = "id:revoke-a-laptop"
+	const icon = "id:controller-platform-android"
+	resting := app.Find(revoke).Style.Background
+	app.Hover(revoke)
+	button := app.Find(revoke)
+	buttonID, iconID := button.ID, app.Find(icon).ID
+	background := button.Style.Background
+	if background == resting {
+		t.Fatal("revoke button did not show hover feedback")
+	}
+
+	renamed := copyObject(phone)
+	renamed["name"] = "Renamed phone"
+	for _, grants := range [][]Object{
+		{copyObject(laptop), copyObject(phone)},
+		{copyObject(laptop), renamed},
+		{renamed, copyObject(laptop)},
+	} {
+		app.Post(func() {
+			s.host = Object{"grants": grants}
+			s.changed()
+		})
+		app.Settle()
+		button := app.Find(revoke)
+		if globalBounds(button).Origin.Y >= globalBounds(app.Find(other)).Origin.Y {
+			t.Fatal("refresh reordered authorized controllers")
+		}
+		if button.ID != buttonID || button.Style.Background != background || app.Find(icon).ID != iconID {
+			t.Fatal("refresh rebuilt the row or reset its hover background")
+		}
+	}
+	app.Find("text:Renamed phone")
+	authorized := copyObject(laptop)
+	authorized["authorizedAt"] = float64(1795000060000)
+	app.Post(func() {
+		s.host = Object{"grants": []Object{renamed, authorized}}
+		s.changed()
+	})
+	app.Settle()
+	if globalBounds(app.Find(other)).Origin.Y >= globalBounds(app.Find(revoke)).Origin.Y || app.Find(revoke).ID != buttonID {
+		t.Fatal("new approval did not move its existing row to the top")
+	}
+	app.Post(func() {
+		s.host = Object{"grants": []Object{renamed}}
+		s.changed()
+	})
+	app.Settle()
+	if app.Exists(other) || app.Find(revoke).ID != buttonID {
+		t.Fatal("authorization removal did not preserve the surviving row")
+	}
+}
+
 type profileCaptureAPI struct {
 	*demoAPI
 	profile device.ClientInfo

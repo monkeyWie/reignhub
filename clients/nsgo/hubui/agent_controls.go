@@ -51,12 +51,13 @@ func agentGuideURL(id string) string {
 }
 
 func agentLabel(cx *core.Scope, p func() Object) core.Node {
+	setup := core.NewMemo(cx, func() string { return agentSetup(p()) })
 	return core.View{Style: fill.Merge(core.Style{Gap: 3}), Children: []core.Node{
 		singleLine(cx, func() string { return str(p(), "name") }, 14, false),
 		core.Dynamic(func(cx *core.Scope) core.Node {
 			l := locales.For(cx)
 			var text string
-			switch agentSetup(p()) {
+			switch setup.Get() {
 			case "open-app":
 				text = l.OpenAgentApp()
 			case "unsupported":
@@ -86,21 +87,34 @@ func (s *State) agentControls(cx *core.Scope, prefix string, p func() Object, op
 		return p()["enabled"] != false
 	}
 	setup := core.NewMemo(cx, func() string { return agentSetup(p()) })
+	// Periodic status updates only replace a button when its action changes.
+	action := core.NewMemo(cx, func() string {
+		kind := setup.Get()
+		if kind != "" && kind != "launch-codex" {
+			return kind
+		}
+		if id != "codex-app" {
+			return ""
+		}
+		status := p()
+		if kind == "" && str(status, "endpoint") != "ipc-recovery" {
+			return ""
+		}
+		if len(objects(status["instances"])) > 0 {
+			return "restart-codex"
+		}
+		return "launch-codex"
+	})
 	look := ui.NewSwitchLook(cx, checked, ui.SizeSmall)
 	return core.View{Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 8, FlexShrink: 0}, Children: []core.Node{
 		core.Dynamic(func(cx *core.Scope) core.Node {
 			l := locales.For(cx)
-			switch setup.Get() {
-			case "launch-codex", "":
-				status := p()
-				if id != "codex-app" || (setup.Get() == "" && str(status, "endpoint") != "websocket" && str(status, "endpoint") != "ipc-recovery") {
-					return nil
-				}
-				if len(objects(status["instances"])) > 0 {
-					return button(cx, prefix+"launch-codex", l.RestartCodex(), nil, "ghost", func() { open("activate:" + id) })
-				}
+			switch action.Get() {
+			case "restart-codex":
+				return button(cx, prefix+"launch-codex", l.RestartCodex(), nil, "ghost", func() { open("activate:" + id) })
+			case "launch-codex":
 				return s.actionButton(cx, prefix+"launch-codex", l.LaunchCodex(), nil, "ghost", func() {
-					s.activateCodex(prefix+"launch-codex", status, false, nil)
+					s.activateCodex(prefix+"launch-codex", p(), false, nil)
 				})
 			case "install":
 				return button(cx, prefix+"install-"+id, l.InstallAgent(), lucide.ArrowUpRight, "ghost", func() { cx.OpenURL(agentGuideURL(id), nil) })

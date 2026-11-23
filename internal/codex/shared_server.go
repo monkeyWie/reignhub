@@ -171,26 +171,17 @@ func (s *sharedServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	var mu sync.Mutex
 	var initializeID string
-	var initialized bool
-	var success bool
 	ready := false
 	var timeout *time.Timer
 	if app {
 		timeout = time.AfterFunc(10*time.Second, stop)
 		defer timeout.Stop()
 	}
-	update := func() {
-		if app && !ready && initialized && success {
-			ready = true
-			timeout.Stop()
-			desktop.ready.Add(1)
-		}
-	}
 	type initMessage struct {
 		ID     json.RawMessage
 		Method string
 		Result json.RawMessage
-		Error  json.RawMessage
+		Error  *rpc.Error
 	}
 	finished := make(chan struct{})
 	go func() {
@@ -210,12 +201,6 @@ func (s *sharedServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if err := up.Write(ctx, kind, data); err != nil {
 				return
 			}
-			if app && message.Method == "initialized" {
-				mu.Lock()
-				initialized = true
-				update()
-				mu.Unlock()
-			}
 		}
 	}()
 	for {
@@ -226,9 +211,11 @@ func (s *sharedServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		if app && !ready && initializeID != "" {
 			var message initMessage
-			if json.Unmarshal(data, &message) == nil && string(message.ID) == initializeID && len(message.Result) != 0 && len(message.Error) == 0 {
-				success = true
-				update()
+			// Codex Desktop can start sending requests immediately after
+			// initialize succeeds, without an initialized notification.
+			if json.Unmarshal(data, &message) == nil && message.Method == "" && string(message.ID) == initializeID && len(message.Result) != 0 && message.Error == nil && timeout.Stop() {
+				ready = true
+				desktop.ready.Add(1)
 			}
 		}
 		mu.Unlock()

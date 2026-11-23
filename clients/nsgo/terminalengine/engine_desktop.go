@@ -12,9 +12,10 @@ import (
 )
 
 type engine struct {
-	t    *terminal.Terminal
-	m    *terminal.Mirror
-	once sync.Once
+	t        *terminal.Terminal
+	m        *terminal.Mirror
+	once     sync.Once
+	closeErr error
 }
 
 func New(ctx context.Context, dir string, size model.Size, shellPath string) (model.Engine, error) {
@@ -56,4 +57,7 @@ func (e *engine) Frame(reset bool) []byte {
 func (e *engine) Send(b []byte)         { e.t.Send(b) }
 func (e *engine) Done() <-chan struct{} { return e.t.Done() }
 func (e *engine) ExitCode() int         { return e.t.ExitCode() }
-func (e *engine) Close() error          { e.once.Do(func() { e.m.Close(); _ = e.t.Close() }); return nil }
+func (e *engine) Close() error {
+	e.once.Do(func() { e.m.Close(); e.closeErr = e.t.Close() })
+	return e.closeErr
+}

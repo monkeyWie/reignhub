@@ -33,14 +33,15 @@ import (
 )
 
 type Grant struct {
-	Pairing string            `json:"pairing,omitempty"`
-	Revoked bool              `json:"revoked,omitempty"`
-	Info    device.ClientInfo `json:"info,omitempty"`
-	Client  string            `json:"client"`
-	Name    string            `json:"name"`
-	Public  string            `json:"public"`
-	Key     string            `json:"key"`
-	Expires int64             `json:"expires,omitempty"`
+	Pairing      string            `json:"pairing,omitempty"`
+	Revoked      bool              `json:"revoked,omitempty"`
+	Info         device.ClientInfo `json:"info,omitempty"`
+	Client       string            `json:"client"`
+	Name         string            `json:"name"`
+	Public       string            `json:"public"`
+	Key          string            `json:"key"`
+	Expires      int64             `json:"expires,omitempty"`
+	AuthorizedAt int64             `json:"authorizedAt,omitempty"`
 }
 type saved struct {
 	Policy       connectivity.Policy `json:"policy,omitempty"`
@@ -433,12 +434,13 @@ func (m *Manager) poll(ctx context.Context) {
 	m.mu.Unlock()
 }
 func (m *Manager) respond(ctx context.Context, id string, allow bool) error {
+	respondedAt := time.Now()
 	m.mu.Lock()
 	p, ok := m.pending[id]
 	intent := m.intents[id]
 	i := m.state.Identity
 	m.mu.Unlock()
-	if !ok || p.Expires < time.Now().Unix() {
+	if !ok || p.Expires < respondedAt.Unix() {
 		return fmt.Errorf("授权请求已过期")
 	}
 	var reply string
@@ -447,9 +449,9 @@ func (m *Manager) respond(ctx context.Context, id string, allow bool) error {
 		if info.Name == "" {
 			info.Name = p.Name
 		}
-		g := Grant{Pairing: p.ID, Client: p.Client, Name: info.Name, Info: info, Public: p.Public, Key: device.Random()}
+		g := Grant{Pairing: p.ID, Client: p.Client, Name: info.Name, Info: info, Public: p.Public, Key: device.Random(), AuthorizedAt: respondedAt.UnixMilli()}
 		if !intent.Remember {
-			g.Expires = time.Now().Add(8 * time.Hour).Unix()
+			g.Expires = respondedAt.Add(8 * time.Hour).Unix()
 		}
 		var e error
 		direct := m.directAddresses(i)
@@ -459,6 +461,9 @@ func (m *Manager) respond(ctx context.Context, id string, allow bool) error {
 		}
 		m.mu.Lock()
 		old, had := m.state.Grants[g.Client]
+		if had && !old.Revoked && old.Pairing == g.Pairing && old.AuthorizedAt > 0 {
+			g.AuthorizedAt = old.AuthorizedAt
+		}
 		m.state.Grants[g.Client] = g
 		e = m.saveGrant(g.Client, &g)
 		if e != nil {
@@ -567,9 +572,16 @@ func (m *Manager) Local(ctx context.Context, r control.Request) (any, error) {
 			if g.Revoked {
 				continue
 			}
-			grants = append(grants, map[string]any{"client": g.Client, "name": g.Name, "platform": g.Info.Platform, "kind": g.Info.Kind, "model": g.Info.Model, "fingerprint": device.Fingerprint(g.Public), "expires": g.Expires})
+			grants = append(grants, map[string]any{"client": g.Client, "name": g.Name, "platform": g.Info.Platform, "kind": g.Info.Kind, "model": g.Info.Model, "fingerprint": device.Fingerprint(g.Public), "expires": g.Expires, "authorizedAt": g.AuthorizedAt})
 		}
 		sort.Slice(pending, func(a, b int) bool { return pending[a]["id"].(string) < pending[b]["id"].(string) })
+		sort.Slice(grants, func(a, b int) bool {
+			left, right := grants[a]["authorizedAt"].(int64), grants[b]["authorizedAt"].(int64)
+			if left != right {
+				return left > right
+			}
+			return grants[a]["client"].(string) < grants[b]["client"].(string)
+		})
 		status := m.status
 		network := m.network.Snapshot()
 		if m.network != nil {

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/monkeyWie/reignhub/internal/device"
@@ -66,6 +67,13 @@ type Factory func(ctx context.Context, directory string, size Size, shellPath st
 
 var ErrMissing = errors.New("终端已结束或设备已重启，请重新打开终端")
 var ErrDetached = errors.New("终端连接已被替换，请重新连接")
+var ErrClosing = errors.New("正在关闭终端")
+var ErrCloseUnconfirmed = errors.New("未能确认终端已关闭")
+
+type termination struct {
+	done chan struct{}
+	err  error
+}
 
 type entry struct {
 	scope      Scope
@@ -74,7 +82,7 @@ type entry struct {
 	engine     Engine
 	mu         sync.Mutex
 	reading    string
-	closed     bool
+	closing    atomic.Pointer[termination]
 	attachment string
 	size       Size
 	sequence   int64
@@ -88,13 +96,13 @@ type Manager struct {
 	cancel  context.CancelFunc
 	factory Factory
 	entries map[string]*entry
-	retired map[string]struct{}
+	retired map[string]Scope
 	closed  bool
 }
 
 func New(ctx context.Context, factory Factory) *Manager {
 	life, cancel := context.WithCancel(ctx)
-	return &Manager{ctx: life, cancel: cancel, factory: factory, entries: map[string]*entry{}, retired: map[string]struct{}{}}
+	return &Manager{ctx: life, cancel: cancel, factory: factory, entries: map[string]*entry{}, retired: map[string]Scope{}}
 }
 func validID(id string) bool { b, err := hex.DecodeString(id); return err == nil && len(b) == 32 }
 
@@ -143,17 +151,21 @@ func (m *Manager) Open(ctx context.Context, scope Scope, p Params, directory fun
 	stop()
 	cancel()
 	e.err = err
-	close(e.ready)
 	if err != nil {
 		m.mu.Lock()
-		if m.entries[p.ID] == e {
+		if m.entries[p.ID] == e && e.closing.Load() == nil {
 			delete(m.entries, p.ID)
 		}
 		m.mu.Unlock()
+	}
+	close(e.ready)
+	if err != nil {
 		return Snapshot{}, err
 	}
 	if m.ctx.Err() != nil {
-		_ = e.engine.Close()
+		m.mu.Lock()
+		m.startTerminationLocked(p.ID, e)
+		m.mu.Unlock()
 		return Snapshot{}, ErrMissing
 	}
 	return m.Attach(ctx, scope, p)
@@ -185,8 +197,8 @@ func (m *Manager) Attach(ctx context.Context, scope Scope, p Params) (Snapshot, 
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.closed {
-		return Snapshot{}, ErrMissing
+	if e.closing.Load() != nil {
+		return Snapshot{}, ErrClosing
 	}
 	e.attachment = device.Random()
 	e.inputSeq = 0
@@ -207,8 +219,8 @@ func (e *entry) snapshot(id string, data []byte) Snapshot {
 	return Snapshot{ID: id, Attachment: e.attachment, Sequence: e.sequence, Data: data, Size: e.size, Exited: exited, ExitCode: e.engine.ExitCode()}
 }
 func (e *entry) check(p Params) error {
-	if e.closed {
-		return ErrMissing
+	if e.closing.Load() != nil {
+		return ErrClosing
 	}
 	if p.Attachment == "" || e.attachment != p.Attachment {
 		return ErrDetached
@@ -357,83 +369,124 @@ func (m *Manager) Terminate(ctx context.Context, scope Scope, p Params) error {
 	if !validID(p.ID) {
 		return errors.New("无效终端参数")
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		return ErrMissing
+	}
+	if owner, known := m.retired[p.ID]; known {
+		m.mu.Unlock()
+		if owner != scope {
+			return ErrMissing
+		}
+		return nil
+	}
 	e := m.entries[p.ID]
 	if e == nil {
 		// A close may overtake an open whose response was lost. Retire even a
 		// missing ID so that the delayed request cannot start a new shell.
-		if _, known := m.retired[p.ID]; !known && len(m.retired)+len(m.entries) >= maxRetired {
+		if len(m.retired)+len(m.entries) >= maxRetired {
 			m.mu.Unlock()
 			return errors.New("本次启动的终端数量已达到上限，请重启 ReignHub")
 		}
-		m.retired[p.ID] = struct{}{}
+		m.retired[p.ID] = scope
 		m.mu.Unlock()
 		return nil
 	} // Idempotent explicit termination.
-	m.mu.Unlock()
 	if e.scope != scope {
+		m.mu.Unlock()
 		return ErrMissing
 	}
+	closing := m.startTerminationLocked(p.ID, e)
+	m.mu.Unlock()
+	return waitTermination(ctx, closing)
+}
+
+// CloseStatus only confirms a termination accepted for this exact scope and ID.
+// A fresh host or a request that never arrived cannot report success.
+func (m *Manager) CloseStatus(ctx context.Context, scope Scope, p Params) error {
+	m.mu.Lock()
+	owner, retired := m.retired[p.ID]
+	if retired && owner == scope {
+		m.mu.Unlock()
+		return nil
+	}
+	e := m.entries[p.ID]
+	if e == nil || e.scope != scope {
+		m.mu.Unlock()
+		return ErrMissing
+	}
+	closing := e.closing.Load()
+	m.mu.Unlock()
+	if closing == nil {
+		return ErrCloseUnconfirmed
+	}
+	return waitTermination(ctx, closing)
+}
+
+func waitTermination(ctx context.Context, closing *termination) error {
 	select {
+	case <-closing.done:
+		return closing.err
 	case <-ctx.Done():
 		return ctx.Err()
-	case <-e.ready:
 	}
-	e.mu.Lock()
-	e.closed = true
-	e.mu.Unlock()
-	var err error
-	if e.engine != nil {
-		err = e.engine.Close()
-	}
-	m.mu.Lock()
-	if m.entries[p.ID] == e {
-		delete(m.entries, p.ID)
-		m.retired[p.ID] = struct{}{}
-	}
-	m.mu.Unlock()
-	return err
 }
+
+func (m *Manager) startTerminationLocked(id string, e *entry) *termination {
+	if closing := e.closing.Load(); closing != nil {
+		return closing
+	}
+	closing := &termination{done: make(chan struct{})}
+	e.closing.Store(closing)
+	// Cleanup belongs to the host once accepted. A cancelled caller stops
+	// waiting and other requests can still proceed while the process exits.
+	go func() {
+		<-e.ready
+		// Let any frame, resize or input already underway finish before closing.
+		e.mu.Lock()
+		e.mu.Unlock()
+		if e.engine != nil {
+			closing.err = e.engine.Close()
+			if closing.err == nil {
+				<-e.engine.Done()
+			}
+		}
+		m.mu.Lock()
+		if closing.err == nil {
+			if m.entries[id] == e {
+				delete(m.entries, id)
+				m.retired[id] = e.scope
+			}
+		} else {
+			e.closing.Store(nil)
+		}
+		close(closing.done)
+		m.mu.Unlock()
+	}()
+	return closing
+}
+
 func (m *Manager) Close() error {
 	m.mu.Lock()
 	m.closed = true
 	m.cancel()
-	entries := m.entries
+	closings := make([]*termination, 0, len(m.entries))
+	for id, e := range m.entries {
+		closings = append(closings, m.startTerminationLocked(id, e))
+	}
 	m.entries = map[string]*entry{}
 	m.mu.Unlock()
 	// Close all shells concurrently; the application's quit budget is shared,
 	// not multiplied by the number of terminals or a slow process setup.
-	done := make(chan struct{})
 	shutdown, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	go func() {
-		var wg sync.WaitGroup
-		for _, e := range entries {
-			wg.Go(func() {
-				select {
-				case <-e.ready:
-				case <-shutdown.Done():
-					return
-				}
-				e.mu.Lock()
-				e.closed = true
-				e.mu.Unlock()
-				if e.engine != nil {
-					_ = e.engine.Close()
-					select {
-					case <-e.engine.Done():
-					case <-shutdown.Done():
-					}
-				}
-			})
-		}
-		wg.Wait()
-		close(done)
-	}()
-	select {
-	case <-done:
-		return nil
-	case <-shutdown.Done():
-		return context.DeadlineExceeded
+	var err error
+	for _, closing := range closings {
+		err = errors.Join(err, waitTermination(shutdown, closing))
 	}
+	return err
 }

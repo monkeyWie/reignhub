@@ -63,7 +63,8 @@ func TestHostAuthorizationButtonLabelsCentered(t *testing.T) {
 		s := newState(cx, newDemoAPI())
 		s.applyColors()
 		s.host = Object{"pending": []Object{{"id": "fixture", "name": "Chrome 157", "kind": "browser", "platform": "darwin", "remember": true, "fingerprint": "0123456789abcdef"}}}
-		return s.dialogView(cx, "authorize:fixture")
+		s.promptHost()
+		return s.hostAuthorizationLayer()
 	}, nsgotest.Size(800, 600))
 	for _, entry := range []struct{ id, text string }{{"deny-host-request", "拒绝"}, {"approve-host-request", "允许连接"}} {
 		button := globalBounds(app.Find("id:" + entry.id))
@@ -88,8 +89,8 @@ func testHostAuthorizationClose(t *testing.T, width core.Points, dark bool) {
 		s = newState(cx, f)
 		s.applyColors()
 		s.host = Object{"pending": []Object{{"id": "fixture", "name": "Microsoft Edge 157", "kind": "browser", "remember": true}}}
-		s.dialog.Set("authorize:fixture")
-		return core.Dynamic(func(cx *core.Scope) core.Node { return s.dialogView(cx, s.dialog.Get()) })
+		s.promptHost()
+		return s.hostAuthorizationLayer()
 	}, nsgotest.Size(width, 600), nsgotest.Environment(core.Environment{Dark: dark}))
 	x := app.Find("id:dialog-authorize-close")
 	xb := globalBounds(x)
@@ -128,13 +129,48 @@ func hostAuthorizationFixture(t *testing.T, expires int64) (*nsgotest.App, *Stat
 		s = newState(cx, f)
 		s.applyColors()
 		s.host = Object{"pending": []Object{{"id": "fixture", "name": "Microsoft Edge 157", "kind": "browser", "remember": true, "expires": expires}}}
-		s.dialog.Set("authorize:fixture")
+		s.promptHost()
 		return core.View{Style: fill, Children: []core.Node{
-			core.Dynamic(func(cx *core.Scope) core.Node { return s.dialogView(cx, s.dialog.Get()) }),
+			s.hostAuthorizationLayer(),
 			core.Show{When: func() bool { s.read(); return s.error != "" }, Then: func(cx *core.Scope) core.Node { return s.errorOverlay(cx, false) }},
 		}}
 	}, nsgotest.Size(800, 600))
 	return app, s, f
+}
+
+func TestIncomingHostAuthorizationPreservesOpenDialog(t *testing.T) {
+	f := &feedbackAPI{demoAPI: newDemoAPI(), requests: make(chan feedbackRequest, 8)}
+	var s *State
+	app := nsgotest.Start(t, func(cx *core.Scope) core.Node {
+		s = newState(cx, f)
+		s.applyColors()
+		s.dialog.Set("service-settings")
+		return s.workspaceView(cx)
+	}, nsgotest.Size(1000, 700))
+	app.Type("id:device-name", "Unsaved host name")
+	field := app.Find("id:device-name").ID
+
+	app.Post(func() {
+		s.host = Object{"pending": []Object{{"id": "incoming", "name": "Controller fixture"}}}
+		s.changed()
+		s.promptHost()
+	})
+	app.WaitFor("id:dialog-authorize", time.Second)
+	app.PressAt("id:approve-host-request", core.Point{X: 14, Y: 14})
+	request := awaitFeedback(t, f)
+	if request.method != "host.respond" || str(request.params, "id") != "incoming" || !flag(request.params, "allow") {
+		t.Fatal("confirmation did not accept the incoming controller")
+	}
+	request.result <- nil
+	app.WaitUntil(time.Second, func() bool { return !app.Exists("id:dialog-authorize") })
+	if view := app.Find("id:device-name"); view.ID != field || view.Text != "Unsaved host name" {
+		t.Fatal("authorization replaced the underlying dialog or discarded its draft")
+	}
+	app.Post(s.promptHost)
+	app.Settle()
+	if app.Exists("id:dialog-authorize") {
+		t.Fatal("stale pending snapshot reopened the accepted dialog")
+	}
 }
 
 func TestHostAuthorizationExpiryAndWithdrawal(t *testing.T) {

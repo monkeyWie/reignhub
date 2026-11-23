@@ -29,10 +29,14 @@ func tooltipCard(cx *core.Scope, children ...core.Node) base.Tooltip {
 // wrapped paths. The entire panel remains one surface.
 func infoRow(cx *core.Scope, id string, icon func() *core.SVG, value func() string, title bool) core.Node {
 	text := dynamicText(cx, value, 12, false)
+	text.MaxLines = 2
+	return infoRowText(cx, id, icon, text, title)
+}
+
+func infoRowText(cx *core.Scope, id string, icon func() *core.SVG, text core.Text, title bool) core.Node {
 	if title {
 		text.Style.FontSize, text.Style.LineHeight, text.Style.FontWeight = 13, 20, core.FontWeightSemibold
 	}
-	text.MaxLines = 2
 	text.Style.FlexGrow, text.Style.FlexShrink, text.Style.MinWidth = 1, 1, core.Pt(0)
 	return core.View{TestID: id, Style: core.Style{Direction: core.Row, AlignItems: core.AlignStart, Gap: 9, MinWidth: core.Pt(0)}, Children: []core.Node{
 		core.View{Style: core.Style{Width: core.Pt(16), Height: core.Pt(20), FlexShrink: 0, AlignItems: core.AlignCenter, JustifyContent: core.JustifyCenter}, Children: []core.Node{

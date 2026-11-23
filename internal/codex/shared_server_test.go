@@ -2,6 +2,7 @@ package codex
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"os"
@@ -82,6 +83,46 @@ func TestSharedCodexServerWithBundledCLI(t *testing.T) {
 	waitDesktop(t, ctx, server, false)
 	server.desktop.Store(&sharedDesktop{path: "/new-desktop-fixture"})
 	rejected(server.address+desktop.path, "", http.StatusNotFound)
+
+	// The installed desktop app treats the initialize response as its
+	// handshake and proceeds with requests without an initialized notification.
+	replacement, _, err := websocket.Dial(ctx, server.address+"/new-desktop-fixture", nil)
+	if err != nil {
+		t.Fatal("replacement desktop could not connect")
+	}
+	defer replacement.CloseNow()
+	readResponse := func(id string) rpc.Message {
+		t.Helper()
+		for {
+			_, frame, err := replacement.Read(ctx)
+			if err != nil {
+				t.Fatal("replacement desktop could not read an RPC response", err)
+			}
+			var response rpc.Message
+			if err := json.Unmarshal(frame, &response); err != nil {
+				t.Fatal(err)
+			}
+			if string(response.ID) == id {
+				if response.Error != nil || len(response.Result) == 0 {
+					t.Fatalf("replacement desktop request %s failed: %v", id, response.Error)
+				}
+				return response
+			}
+		}
+	}
+	if err := replacement.Write(ctx, websocket.MessageText, []byte(`{"id":1,"method":"initialize","params":{"clientInfo":{"name":"fixture","version":"1.0.0"}}}`)); err != nil {
+		t.Fatal(err)
+	}
+	readResponse("1")
+	if err := replacement.Write(ctx, websocket.MessageText, []byte(`{"id":2,"method":"thread/read","params":{"threadId":"`+created.Thread.ID+`"}}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(readResponse("2").Result, &read); err != nil || read.Thread.ID != created.Thread.ID {
+		t.Fatal("replacement desktop lost the shared thread", err)
+	}
+	waitDesktop(t, ctx, server, true)
+	_ = replacement.CloseNow()
+	waitDesktop(t, ctx, server, false)
 }
 
 func waitDesktop(t *testing.T, ctx context.Context, s *sharedServer, ready bool) {

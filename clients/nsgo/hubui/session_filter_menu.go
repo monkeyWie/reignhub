@@ -97,14 +97,13 @@ func sessionFiltersButtonID(section string) string {
 	return section + "-filters"
 }
 
-func (s *State) sessionFiltersButton(cx *core.Scope, section string) core.Node {
+func (s *State) sessionFiltersButton(cx *core.Scope, section string, open *core.Signal[bool], unread func() bool) core.Node {
 	f := s.sectionFilters(section)
 	// Narrow windows use the same drill-in sheet as touch, keeping cascades
 	// from covering their parents or running beyond the viewport.
 	sheet := core.NewMemo(cx, func() bool { return !cx.Env().Desktop() || cx.Env().Window().Width < 650 })
 	return core.Dynamic(func(cx *core.Scope) core.Node {
 		onSheet := sheet.Get()
-		open := core.NewSignal(cx, false)
 		tipOpen := core.NewSignal(cx, false)
 		tip := tooltipCard(cx, label(cx, locales.For(cx).SessionFilters(), 12, false))
 		tip.Open = func() bool { return tipOpen.Get() && !open.Get() }
@@ -122,7 +121,7 @@ func (s *State) sessionFiltersButton(cx *core.Scope, section string) core.Node {
 			StyleFunc: func() core.Style {
 				s.read()
 				st := contextualIconStyle(cx)
-				if !open.Get() && f.count() == 0 {
+				if !open.Get() && (unread() || f.count() == 0) {
 					st = st.Merge(contextualAffordance(cx, "directory-section", true))
 				}
 				if open.Get() || f.count() > 0 {

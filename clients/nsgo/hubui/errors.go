@@ -58,7 +58,7 @@ func sessionAccessHelp(raw string, failure *sessionOperationError) accessHelp {
 
 func (s *State) errorAtComposer() bool {
 	s.read()
-	if s.dialog.Get() != "" {
+	if s.dialog.Get() != "" || s.hostAuthorization.Get() != "" {
 		return false
 	}
 	f := s.failure

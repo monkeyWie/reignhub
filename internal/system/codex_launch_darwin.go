@@ -18,6 +18,7 @@ import (
 )
 
 const CodexSharedDesktop = true
+const CodexRestartForceStops = false
 
 var loadCodexAppKit = sync.OnceValue(func() error {
 	_, err := purego.Dlopen("/System/Library/Frameworks/AppKit.framework/AppKit", purego.RTLD_NOW|purego.RTLD_GLOBAL)
