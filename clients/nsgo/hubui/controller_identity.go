@@ -73,8 +73,7 @@ func (s *State) hostGlyph(cx *core.Scope, target string, size core.Points) core.
 		StyleFunc: func() core.Style { return core.Style{Color: palette(cx).foreground} }}
 }
 
-func identityGlyph(cx *core.Scope, info Object, size core.Points) core.Node {
-	key := controllerIconKey(info)
+func identityGlyph(cx *core.Scope, key string, size core.Points) core.Node {
 	if svg := brandLogos[key]; svg != nil {
 		return core.Icon{SVG: svg, TestID: "controller-platform-" + key, Style: core.Style{Width: core.Pt(size), Height: core.Pt(size), FlexShrink: 0}, StyleFunc: func() core.Style { return core.Style{Color: palette(cx).foreground} }}
 	}
@@ -96,13 +95,14 @@ func controllerIdentifier(info Object) string {
 	}
 	return ""
 }
-func controllerIdentity(cx *core.Scope, get func() Object) core.Node {
+func controllerIdentity(cx *core.Scope, get func() Object, details ...core.Node) core.Node {
+	icon := core.NewMemo(cx, func() string { return controllerIconKey(get()) })
 	return row(core.Dynamic(func(cx *core.Scope) core.Node {
-		return identityGlyph(cx, get(), 22)
-	}), core.View{Style: fill, Children: []core.Node{
+		return identityGlyph(cx, icon.Get(), 22)
+	}), core.View{Style: fill, Children: append([]core.Node{
 		singleLine(cx, func() string { return str(get(), "name") }, 13, false),
 		core.Show{When: func() bool { return controllerIdentifier(get()) != "" }, Then: func(cx *core.Scope) core.Node {
 			return dynamicText(cx, func() string { return controllerIdentifier(get()) }, 11, true)
 		}},
-	}})
+	}, details...)})
 }

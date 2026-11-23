@@ -13,6 +13,8 @@ type ResponseError struct {
 	Message string
 }
 
+func (e *ResponseError) ResponseCode() string { return e.Code }
+
 func (e *ResponseError) Error() string        { return e.Message }
 func (e *ResponseError) OutcomeUnknown() bool { return e.Code == WriteOutcomeUnknown }
 
@@ -27,6 +29,12 @@ func ErrorCode(err error) string {
 	}
 	if errors.Is(err, terminal.ErrDetached) {
 		return "TERMINAL_DETACHED"
+	}
+	if errors.Is(err, terminal.ErrClosing) {
+		return "TERMINAL_CLOSING"
+	}
+	if errors.Is(err, terminal.ErrCloseUnconfirmed) {
+		return "TERMINAL_CLOSE_UNCONFIRMED"
 	}
 	if OutcomeUnknown(err) {
 		return WriteOutcomeUnknown

@@ -14,10 +14,14 @@ type terminalPanel struct {
 type terminalTab struct {
 	profile, profileName string
 	id, title            string
+	reportedPath         string
+	reportedShell        string
 	number, revision     int
 	openDone             chan struct{}
 	closing              bool
 	closeError           string
+	receiver             *terminalReceiver
+	inputUnconfirmed     bool
 }
 
 func (s *State) terminalVisible() bool {

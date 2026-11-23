@@ -3,12 +3,16 @@
 package hubui
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/monkeyWie/reignhub/internal/control"
+	"github.com/monkeyWie/reignhub/internal/provider"
+	model "github.com/monkeyWie/reignhub/internal/terminal"
 	"github.com/nsgo-dev/nsgo/core"
 	"github.com/nsgo-dev/nsgo/nsgotest"
 )
@@ -136,4 +140,47 @@ func TestTerminalDividerPreservesMessagePosition(t *testing.T) {
 	})
 	app.WaitUntil(time.Second, func() bool { return math.Abs(float64(distance())) <= 1 && !app.Exists("id:jump-to-latest") })
 	app.Screenshot("terminal-divider-messages-stable")
+}
+
+type terminalScrollFixture struct{ *terminalUITestEngine }
+
+func (terminalScrollFixture) Resize(model.Size) {}
+
+func TestTerminalTabRestoresScrollPosition(t *testing.T) {
+	var history strings.Builder
+	for i := range 75 {
+		fmt.Fprintf(&history, "fixture line %d\r\n", i)
+	}
+	manager := model.New(context.Background(), func(context.Context, string, model.Size, string) (model.Engine, error) {
+		return terminalScrollFixture{&terminalUITestEngine{dirty: true, input: history.String(), done: make(chan struct{})}}, nil
+	})
+	t.Cleanup(func() { _ = manager.Close() })
+	dispatcher := &control.Dispatcher{Terminals: manager, Providers: map[string]provider.Provider{"pi": terminalUITestProvider{dir: t.TempDir()}}}
+	app := nsgotest.Start(t, func(cx *core.Scope) core.Node {
+		s := workspaceLayoutFixture(cx)
+		s.providers = []Object{{"id": "pi", "capabilities": Object{"terminal": true}}}
+		s.api = &terminalUITestAPI{s.api, dispatcher}
+		return s.workspaceView(cx)
+	}, nsgotest.Size(1100, 900), nsgotest.Environment(core.Environment{OS: core.OSMacOS, Idiom: core.IdiomDesktop}))
+	const scroll = "id:conversation-terminal-scroll"
+	app.Press("id:terminal-toggle")
+	app.WaitFor(scroll, 3*time.Second)
+	app.WaitUntil(2*time.Second, func() bool { return app.Find(scroll).Offset.Y > 500 })
+	app.Scroll(scroll, -240)
+	app.WaitUntil(2*time.Second, func() bool {
+		view := app.Find(scroll)
+		return view.Offset.Y > 0 && view.Content.Height-view.Frame.Size.Height-view.Offset.Y > 100
+	})
+	before := app.Find(scroll).Offset.Y
+	app.Press("id:terminal-add")
+	app.WaitUntil(3*time.Second, func() bool { return app.Exists(scroll) && app.Find(scroll).Offset.Y > before+100 })
+	app.Press("id:terminal-tab-1")
+	app.WaitUntil(2*time.Second, func() bool {
+		if !app.Exists(scroll) {
+			return false
+		}
+		offset := app.Find(scroll).Offset.Y
+		// NSGo restores the emulator row, which can round to one cell.
+		return math.Abs(float64(offset-before)) <= 16
+	})
 }

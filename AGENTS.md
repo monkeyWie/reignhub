@@ -9,6 +9,7 @@ Read the relevant [engineering reference](docs/engineering/README.md) before cha
 - Keep work bounded, cancellable and responsive. A slow operation or failed session must not block navigation, other sessions or independent Agent execution.
 - Isolate every platform-dependent Go capability behind compile-time-selected files (`*_windows.go`, `*_darwin.go`, or `//go:build`), including platform tests and unsupported fallbacks; do not select OS implementations with runtime branches in shared code. On Windows, use Win32 APIs through `golang.org/x/sys/windows` / syscall for process discovery and control, and Microsoft's `go-winio` for named pipes. Do not invoke shells or system command-line utilities for OS inspection.
 - Use the shared NSGo controller and existing design system. Every interaction needs clear feedback; preserve accessibility, responsive layouts and platform conventions.
+- Keep rows, controls and ordering stable across background updates. Follow [refreshing lists](docs/engineering/frontend-design.md#refreshing-lists) when adding or changing a polled list.
 - Avoid unnecessary secondary labels and descriptions. Let the layout do the explaining. Write product UI from the user's perspective; keep implementation details in diagnostics unless they help the user decide what to do.
 - Verify observable behavior and recovery, update the owning reference when its contract changes, and report checks actually run and remaining limits. A document or successful build is not proof of a working integration.
 

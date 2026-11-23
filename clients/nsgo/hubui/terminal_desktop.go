@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -130,17 +131,33 @@ func (s *State) closeTerminal(p *terminalPanel, tab *terminalTab, reopen bool) {
 	s.changed()
 	go func() {
 		ctx, cancel := context.WithTimeout(s.ctx, 8*time.Second)
-		defer cancel()
-		_, err := call(ctx, "terminal.close", model.Params{ID: id})
+		params := model.Params{ID: id}
+		_, err := call(ctx, "terminal.close", params)
+		var response *control.ResponseError
+		unconfirmed := err != nil && (ctx.Err() != nil || transportError(err) || control.OutcomeUnknown(err) ||
+			errors.Is(err, model.ErrCloseUnconfirmed) || errors.As(err, &response) && response.Code == "TERMINAL_CLOSE_UNCONFIRMED")
+		cancel()
+		if unconfirmed && s.ctx.Err() == nil {
+			status, stop := context.WithTimeout(s.ctx, 3*time.Second)
+			_, err = call(status, "terminal.closeStatus", params)
+			stop()
+		}
 		s.cx.Post(func() {
 			tab.closing = false
 			switch {
 			case err != nil:
 				tab.closeError = err.Error()
+				if unconfirmed {
+					tab.closeError = locales.For(s.cx).TerminalCloseUnconfirmed()
+				}
 			case reopen:
+				s.forgetTerminalReceiver(tab)
+				tab.inputUnconfirmed = false
 				tab.id, tab.title, tab.openDone = device.Random(), "", nil
+				tab.reportedPath, tab.reportedShell = "", ""
 				tab.revision++
 			default:
+				s.forgetTerminalReceiver(tab)
 				i := slices.Index(p.tabs, tab)
 				if i < 0 {
 					return
@@ -184,18 +201,76 @@ func terminalCall(api API, target, provider, session string) model.Call {
 	}
 }
 
-func (s *State) terminalContent(cx *core.Scope, p *terminalPanel, tab *terminalTab) core.Node {
+const maxCachedTerminals = 8
+
+type terminalReceiver struct {
+	cancel                context.CancelFunc
+	conn                  *model.Conn
+	visible               bool
+	live                  *core.Signal[*terminal.Terminal]
+	problem               *core.Signal[string]
+	busy, exited, missing *core.Signal[bool]
+}
+
+func (s *State) forgetTerminalReceiver(tab *terminalTab) {
+	r := tab.receiver
+	if r == nil {
+		return
+	}
+	if r.conn != nil {
+		_ = r.conn.Close()
+		tab.inputUnconfirmed = tab.inputUnconfirmed || r.conn.InputUnconfirmed()
+	}
+	r.cancel()
+	tab.receiver = nil
+	if i := slices.Index(s.terminalCache, tab); i >= 0 {
+		s.terminalCache = slices.Delete(s.terminalCache, i, i+1)
+	}
+}
+
+func (s *State) forgetDeviceTerminals(target string) {
+	for key, panel := range s.terminalPanels {
+		if strings.HasPrefix(key, target+"|") {
+			for _, tab := range panel.tabs {
+				s.forgetTerminalReceiver(tab)
+			}
+			delete(s.terminalPanels, key)
+		}
+	}
+}
+
+func (s *State) useTerminalReceiver(tab *terminalTab) *terminalReceiver {
+	if i := slices.Index(s.terminalCache, tab); i >= 0 {
+		s.terminalCache = slices.Delete(s.terminalCache, i, i+1)
+	}
+	if len(s.terminalCache) >= maxCachedTerminals {
+		s.forgetTerminalReceiver(s.terminalCache[0])
+	}
+	s.terminalCache = append(s.terminalCache, tab)
+	if tab.receiver == nil {
+		s.startTerminalReceiver(tab)
+	}
+	return tab.receiver
+}
+
+func (s *State) startTerminalReceiver(tab *terminalTab) {
 	ctx, cancel := context.WithCancel(s.ctx)
-	cx.Cleanup(cancel)
+	live := core.NewSignal[*terminal.Terminal](s.cx, nil)
+	problem := core.NewSignal(s.cx, "")
+	busy := core.NewSignal(s.cx, true)
+	exited := core.NewSignal(s.cx, false)
+	missing := core.NewSignal(s.cx, false)
+	r := &terminalReceiver{cancel: cancel, live: live, problem: problem, busy: busy, exited: exited, missing: missing}
+	tab.receiver = r
+	if tab.inputUnconfirmed {
+		problem.Set(model.ErrInputUnconfirmed.Error())
+		busy.Set(false)
+		return
+	}
 	id := tab.id
 	call := terminalCall(s.api, s.target, str(s.selected, "providerId"), str(s.selected, "id"))
-	live := core.NewSignal[*terminal.Terminal](cx, nil)
-	problem := core.NewSignal(cx, "")
-	busy := core.NewSignal(cx, true)
-	exited := core.NewSignal(cx, false)
-	missing := core.NewSignal(cx, false)
 	post := func(f func()) {
-		cx.Post(func() {
+		s.cx.Post(func() {
 			if ctx.Err() == nil {
 				f()
 			}
@@ -249,10 +324,9 @@ func (s *State) terminalContent(cx *core.Scope, p *terminalPanel, tab *terminalT
 			}
 			create = false
 			t, err := terminal.New(terminal.Options{Conn: conn, ResizeByConn: true, Scrollback: 512 << 10, OnTitle: func(title string) {
-				title = navigationSnippet(title, 96)
+				title = strings.TrimSpace(title)
 				post(func() {
-					if tab.title != title {
-						tab.title = title
+					if tab.setTitle(title) {
 						s.changed()
 					}
 				})
@@ -268,6 +342,8 @@ func (s *State) terminalContent(cx *core.Scope, p *terminalPanel, tab *terminalT
 				problem.Set("")
 				missing.Set(false)
 				exited.Set(false)
+				r.conn = conn
+				conn.SetVisible(r.visible)
 				conn.Bind(func(size model.Size) { t.ResizePixels(size.Cols, size.Rows, size.CellWidth, size.CellHeight) }, func(err error, ended bool) {
 					if err != nil {
 						select {
@@ -279,6 +355,9 @@ func (s *State) terminalContent(cx *core.Scope, p *terminalPanel, tab *terminalT
 						exited.Set(ended)
 						missing.Set(terminalGone(err))
 						if err != nil {
+							if errors.Is(err, model.ErrInputUnconfirmed) {
+								tab.inputUnconfirmed = true
+							}
 							problem.Set(err.Error())
 						}
 					})
@@ -286,7 +365,11 @@ func (s *State) terminalContent(cx *core.Scope, p *terminalPanel, tab *terminalT
 				live.Set(t)
 			})
 			<-conn.Done()
-			post(func() { live.Set(nil) })
+			post(func() {
+				tab.inputUnconfirmed = tab.inputUnconfirmed || conn.InputUnconfirmed()
+				r.conn = nil
+				live.Set(nil)
+			})
 			_ = t.Close()
 			if ctx.Err() != nil {
 				return
@@ -307,11 +390,29 @@ func (s *State) terminalContent(cx *core.Scope, p *terminalPanel, tab *terminalT
 			post(func() { busy.Set(true) })
 		}
 	}()
+}
+
+func (s *State) terminalContent(cx *core.Scope, p *terminalPanel, tab *terminalTab) core.Node {
+	r := s.useTerminalReceiver(tab)
+	r.visible = true
+	if r.conn != nil {
+		r.conn.SetVisible(true)
+	}
+	cx.Cleanup(func() {
+		r.visible = false
+		if r.conn != nil {
+			r.conn.SetVisible(false)
+		}
+	})
+	live, problem, busy, exited, missing := r.live, r.problem, r.busy, r.exited, r.missing
+
 	retry := func() {
 		if exited.GetUntracked() || missing.GetUntracked() {
 			s.closeTerminal(p, tab, true)
 			return
 		}
+		s.forgetTerminalReceiver(tab)
+		tab.inputUnconfirmed = false
 		tab.revision++
 		s.changed()
 	}
@@ -319,7 +420,10 @@ func (s *State) terminalContent(cx *core.Scope, p *terminalPanel, tab *terminalT
 		core.Show{When: busy.Get, Then: func(cx *core.Scope) core.Node {
 			return s.loadingRing("terminal-connecting", locales.For(cx).TerminalConnecting(), 12)
 		}},
-		core.Show{When: func() bool { return problem.Get() != "" || exited.Get() }, Then: func(cx *core.Scope) core.Node {
+		core.Show{When: func() bool {
+			s.read()
+			return !tab.closing && (problem.Get() != "" || exited.Get())
+		}, Then: func(cx *core.Scope) core.Node {
 			status := dynamicText(cx, func() string {
 				if err := problem.Get(); err != "" {
 					return err
@@ -335,7 +439,9 @@ func (s *State) terminalContent(cx *core.Scope, p *terminalPanel, tab *terminalT
 				v.Disabled = func() bool { s.read(); return tab.closing || busy.Get() }
 				return v
 			})
-			return core.View{TestID: "terminal-error", Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Padding: core.Symmetric(2, 12), Gap: 6}, Children: []core.Node{status, reconnect}}
+			return core.View{TestID: "terminal-error", Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Padding: core.Symmetric(2, 12), Gap: 6}, Children: []core.Node{
+				core.Show{When: func() bool { s.read(); return tab.closeError == "" }, Then: func(*core.Scope) core.Node { return status }}, reconnect,
+			}}
 		}},
 		core.Dynamic(func(cx *core.Scope) core.Node {
 			t := live.Get()
@@ -361,13 +467,13 @@ func terminalGone(err error) bool {
 	return errors.Is(err, model.ErrMissing) || errors.As(err, &response) && response.Code == "TERMINAL_GONE"
 }
 func retryTerminalConnection(err error) bool {
-	if errors.Is(err, model.ErrInputUnconfirmed) || terminalGone(err) || errors.Is(err, model.ErrDetached) {
+	if errors.Is(err, model.ErrInputUnconfirmed) || terminalGone(err) || errors.Is(err, model.ErrDetached) || errors.Is(err, model.ErrClosing) {
 		return false
 	}
 	var response *control.ResponseError
 	if errors.As(err, &response) {
 		switch response.Code {
-		case "TERMINAL_DENIED", "TERMINAL_DETACHED", "TERMINAL_UNSUPPORTED", control.ConnectionAuthorizationExpired:
+		case "TERMINAL_DENIED", "TERMINAL_DETACHED", "TERMINAL_CLOSING", "TERMINAL_UNSUPPORTED", control.ConnectionAuthorizationExpired:
 			return false
 		}
 	}

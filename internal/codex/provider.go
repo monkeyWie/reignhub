@@ -40,6 +40,9 @@ type Provider struct {
 	pending         map[string]pending
 	next            uint64
 	connectMu       sync.Mutex
+	observeMu       sync.Mutex
+	shared          *sharedServer
+	retired         *rpc.Client
 	live            *liveStream
 	projectMu       sync.Mutex
 	projectsAt      time.Time
@@ -62,18 +65,24 @@ func (p *Provider) Start(ctx context.Context) error {
 	return p.startAppServer(ctx)
 }
 
-// Closing Hub releases only its own executor and IPC identity. It never
-// terminates, relaunches, or rewrites the environment of the user's Codex App.
+// Closing Hub releases its connections and owned backends.
 func (p *Provider) Close() error {
 	p.connectMu.Lock()
 	defer p.connectMu.Unlock()
 	p.mu.Lock()
-	c, b := p.client, p.ipc
+	c, b, shared, retired := p.client, p.ipc, p.shared, p.retired
+	p.shared, p.retired = nil, nil
 	p.client = nil
 	p.ipc = nil
 	p.created = nil
 	p.pending = map[string]pending{}
 	p.mu.Unlock()
+	if shared != nil {
+		shared.close()
+	}
+	if retired != nil {
+		_ = retired.Close()
+	}
 	if c != nil {
 		_ = c.Close()
 		select {
@@ -92,7 +101,7 @@ func (p *Provider) Status(ctx context.Context) provider.Status {
 	instances, err := system.Discover(ctx, app)
 	cli := system.FindCLI(p.cfg.CodexCLI, app)
 	p.mu.Lock()
-	c, b, last := p.client, p.ipc, p.lastError
+	c, b, last, shared := p.client, p.ipc, p.lastError, p.shared
 	p.mu.Unlock()
 	s := provider.Status{ID: "codex-app", Name: "Codex", State: "unavailable", Installed: app != "" || cli != "", Running: len(instances) > 0, InstallPath: app, Instances: instances, LastError: last, Capabilities: provider.Capabilities{SessionRemoval: "archive", Streaming: true, History: true, Create: true, Send: true, Steer: true, Interrupt: true, Approvals: true, Desktop: true, ImageInput: true, FileInput: true}}
 	if appErr != nil {
@@ -114,6 +123,15 @@ func (p *Provider) Status(ctx context.Context) provider.Status {
 		s.State = "detected"
 		s.Detail = "正在连接"
 	}
+	if shared != nil {
+		s.Endpoint = "websocket"
+		if c != nil && c.Alive() && shared.connected() {
+			s.State, s.Detail, s.DesktopClients = "connected", "已就绪", 1
+		} else {
+			s.State, s.Detail = "launch-required", "请通过 ReignHub 启动 Codex"
+		}
+		return s
+	}
 	if b != nil {
 		ipc := b.client()
 		if ipc != nil && ipc.Alive() {
@@ -123,7 +141,14 @@ func (p *Provider) Status(ctx context.Context) provider.Status {
 			s.State = "connected"
 			s.Detail = "已就绪"
 			s.Endpoint = "ipc"
+			if system.CodexSharedDesktop && app != "" && b.needsSharedDesktop() {
+				s.Endpoint = "ipc-recovery"
+			}
 			s.DesktopClients = len(instances)
+		}
+		if system.CodexSharedDesktop && app != "" && (ipc == nil || !ipc.Alive()) && b.connectionError() != nil {
+			s.State, s.Detail = "launch-required", "请通过 ReignHub 启动 Codex"
+			s.Running = len(instances) > 0
 		}
 	}
 	return s
@@ -485,7 +510,7 @@ func (p *Provider) Create(ctx context.Context, o provider.CreateOptions) (provid
 		return provider.Session{}, provider.ErrUnavailable
 	}
 	var createdRaw json.RawMessage
-	if err := c.Call(ctx, "thread/start", params, &createdRaw); err != nil {
+	if err := p.threadWrite(ctx, c, "thread/start", params, &createdRaw); err != nil {
 		return provider.Session{}, err
 	}
 	if err := json.Unmarshal(createdRaw, &out); err != nil {
@@ -528,16 +553,21 @@ func (p *Provider) threadClient(ctx context.Context, id string) (*rpc.Client, er
 		if err := c.Call(ctx, "thread/resume", map[string]any{"threadId": id, "excludeTurns": true}, &resumed); err != nil {
 			return nil, fmt.Errorf("无法接续原会话（不会另建会话）: %w", err)
 		}
-		if b := p.appBridge(); b != nil {
-			b.register(id, resumed, false)
-			p.mu.Lock()
-			if p.client == c {
-				if p.created == nil {
-					p.created = map[string]*rpc.Client{}
-				}
-				p.created[id] = c
-			}
+		p.mu.Lock()
+		if p.client != c {
 			p.mu.Unlock()
+			return nil, provider.ErrUnavailable
+		}
+		b := p.ipc
+		if b != nil || p.shared != nil {
+			if p.created == nil {
+				p.created = map[string]*rpc.Client{}
+			}
+			p.created[id] = c
+		}
+		p.mu.Unlock()
+		if b != nil {
+			b.register(id, resumed, false)
 		}
 	}
 	return c, nil
@@ -603,7 +633,7 @@ func (p *Provider) Interrupt(ctx context.Context, id, turn string) error {
 		_, err = b.request(ctx, "thread-follower-interrupt-turn", map[string]any{"conversationId": id, "mode": "user-stop", "expectedTurnId": turn}, owner)
 		return err
 	}
-	return c.Call(ctx, "turn/interrupt", map[string]string{"threadId": id, "turnId": turn}, nil)
+	return p.threadWrite(ctx, c, "turn/interrupt", map[string]string{"threadId": id, "turnId": turn}, nil)
 }
 func (p *Provider) Approvals() []provider.Approval {
 	p.mu.Lock()
@@ -741,12 +771,6 @@ func (p *Provider) observe(m rpc.Message, reply func(context.Context, any) error
 		p.resolvePending("service", m)
 		p.broker.Publish("codex", m.Method, m.Params)
 	}
-}
-
-// IPC connects to the already-running App. expected/confirm are obsolete
-// launch controls and are deliberately never used to restart another program.
-func (p *Provider) ConnectDesktop(ctx context.Context, _ []provider.Instance, _ bool) error {
-	return p.Start(ctx)
 }
 
 func (p *Provider) clearRoute(route string) {

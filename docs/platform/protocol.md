@@ -175,6 +175,10 @@ output sequence, `inputSeq`, base64 `data` bytes, and `size` with integer `cols`
   rejected. Controllers never automatically replay input.
 - `terminal.resize`, `terminal.detach` and `terminal.close` resize, detach the
   reader, and explicitly terminate respectively. Detach does not stop a shell.
+- `terminal.closeStatus` is a cancellable, uncached check of an accepted close.
+  It returns null once the current host confirms termination for the same scope
+  and ID. It cannot initiate termination or confirm an ID from a previous host
+  process.
 
 Both open methods, attach and read return `{id, attachment, sequence, data?, size, exited, exitCode}`.
 `data` contains official NSGo Mirror VT bytes. Input, resize, detach and close return null.
@@ -185,6 +189,9 @@ receiver. `TERMINAL_UNSUPPORTED`, `TERMINAL_DENIED`, `TERMINAL_GONE` and
 missing process and a replaced attachment. Terminals are scoped by trusted
 transport identity, Provider and conversation. Existing grants apply on direct
 and relay paths; local-only `host.terminal.enabled` persists additional consent.
+`TERMINAL_CLOSING` indicates that cleanup is underway. A close can return
+`TERMINAL_CLOSE_UNCONFIRMED` when its wait expires while cleanup continues. The
+controller can check `terminal.closeStatus` after an uncertain response.
 
 Terminal reads have four independent slots per peer and terminal output uses
 bulk transport priority, leaving ordinary navigation and Agent operations free.

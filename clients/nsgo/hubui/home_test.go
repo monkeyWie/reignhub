@@ -130,6 +130,75 @@ func TestHomeOverviewAtNarrowDesktopWidth(t *testing.T) {
 	app.Screenshot("home-device-agents-narrow")
 }
 
+func TestCodexRestartOnlyAppearsDuringRecovery(t *testing.T) {
+	status := func(state, endpoint string) Object {
+		return Object{
+			"id": "codex-app", "name": "Codex", "installed": true,
+			"state": state, "endpoint": endpoint,
+			"instances": []Object{{"pid": 123}},
+		}
+	}
+	var update func(Object)
+	app := nsgotest.Start(t, func(cx *core.Scope) core.Node {
+		s := newState(cx, newDemoAPI())
+		provider := core.NewSignalFunc(cx, status("launch-required", "websocket"), nil)
+		update = func(p Object) { cx.Post(func() { provider.Set(p) }) }
+		return s.agentControls(cx, "home-", provider.Get, func(string) {})
+	}, nsgotest.Size(640, 300), nsgotest.Environment(core.Environment{Locale: "en-US"}))
+
+	const restart = "id:home-launch-codex"
+	app.Find(restart)
+	update(status("connected", "websocket"))
+	app.WaitUntil(time.Second, func() bool { return !app.Exists(restart) })
+	update(status("connected", "ipc-recovery"))
+	app.WaitFor(restart, time.Second)
+	update(status("connected", "ipc"))
+	app.WaitUntil(time.Second, func() bool { return !app.Exists(restart) })
+	update(status("launch-required", "websocket"))
+	app.WaitFor(restart, time.Second)
+}
+
+func TestAgentListKeepsRestartHoverDuringRefresh(t *testing.T) {
+	for _, prefix := range []string{"home-", "settings-"} {
+		t.Run(prefix, func(t *testing.T) {
+			var s *State
+			app := nsgotest.Start(t, func(cx *core.Scope) core.Node {
+				s = newState(cx, newDemoAPI())
+				s.applyColors()
+				s.localProviders = []Object{{
+					"id": "codex-app", "name": "Codex", "installed": true,
+					"state": "launch-required", "endpoint": "websocket",
+					"instances": []Object{{"pid": 123}},
+				}}
+				if prefix == "home-" {
+					return s.localOverview(cx, prefix)
+				}
+				return s.agentSettings(cx)
+			}, nsgotest.Size(760, 560), nsgotest.Environment(core.Environment{Idiom: core.IdiomDesktop, Locale: "en-US"}))
+
+			restart := "id:" + prefix + "launch-codex"
+			resting := app.Find(restart).Style.Background
+			app.Hover(restart)
+			button := app.Find(restart)
+			id, background := button.ID, button.Style.Background
+			if background == resting {
+				t.Fatal("restart button did not show hover feedback")
+			}
+			for range 3 {
+				app.Post(func() {
+					s.localProviders = visibleProviders(s.localProviders)
+					s.changed()
+				})
+				app.Settle()
+				button := app.Find(restart)
+				if button.ID != id || button.Style.Background != background {
+					t.Fatal("refresh replaced the restart button or reset its hover background")
+				}
+			}
+		})
+	}
+}
+
 func TestControllerHomeOffersRemoteConnection(t *testing.T) {
 	app := nsgotest.Start(t, func(cx *core.Scope) core.Node {
 		return RootWithAPI(cx, &mobileDemo{newDemoAPI()}, false)

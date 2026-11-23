@@ -174,9 +174,18 @@ func TestTerminalRemoteRecoveryAndRevocation(t *testing.T) {
 			if _, err := call(ctx, next, "terminal.input", p); err == nil {
 				t.Fatal("revoked writer accepted")
 			}
+			if _, err := call(ctx, next, "terminal.closeStatus", p); err == nil {
+				t.Fatal("revoked controller could check terminal close status")
+			}
 			allowed.Store(true)
 			if _, err := call(ctx, next, "terminal.attach", p); err != nil {
 				t.Fatal("permission recovery failed", err)
+			}
+			if _, err := call(ctx, next, "terminal.close", p); err != nil {
+				t.Fatal("terminate failed", err)
+			}
+			if _, err := call(ctx, next, "terminal.closeStatus", p); err != nil {
+				t.Fatal("close confirmation failed over the encrypted link", err)
 			}
 		})
 	}

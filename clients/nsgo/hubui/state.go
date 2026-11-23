@@ -24,6 +24,7 @@ type State struct {
 	cancelEntry      context.CancelFunc
 	cancelPageRead   context.CancelFunc
 	terminalPanels   map[string]*terminalPanel
+	terminalCache    []*terminalTab
 	composerRef      *core.Ref
 	draftWriter      *draftWriter
 	draftSaveFailed  bool
@@ -46,6 +47,7 @@ type State struct {
 	revision                                                *core.Signal[int]
 	width                                                   *core.Signal[core.Points]
 	dialog                                                  *core.Signal[string]
+	hostAuthorization                                       *core.Signal[string]
 	devices, localProviders, providers, sessions, approvals []Object
 	agentDefinitions                                        Object
 	host, selected, transcript, scanned                     Object
@@ -149,6 +151,7 @@ func newState(cx *core.Scope, api API) *State {
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &State{clientName: platformDeviceName(), drafts: map[string]draftState{}, expanded: map[string]bool{}, cx: cx, api: api, ctx: ctx, cancel: cancel, revision: core.NewSignal(cx, 0), width: core.NewSignal(cx, core.Points(1320)), dialog: core.NewSignal(cx, ""), draft: core.NewSignal(cx, ""), sessionWidth: core.NewSignal(cx, core.Points(300)), collapsed: map[string]bool{}, images: map[string][]byte{}, loadingImages: map[string]bool{}, previewIndex: core.NewSignal(cx, 0), prompted: map[string]bool{}, retrying: map[string]time.Time{}}
 	s.snapshots = newSnapshotWriter(ctx, identified.API, s.historySaved)
+	s.hostAuthorization = core.NewSignal(cx, "")
 	s.loadingMotion = newLoadingMotion(cx)
 	s.mobileSidebarOpen = core.NewSignal(cx, false)
 	s.sidebarHidden = core.NewSignal(cx, false)
@@ -752,14 +755,14 @@ func (s *State) autoReconnect() {
 	}
 }
 func (s *State) promptHost() {
-	if s.dialog.GetUntracked() != "" {
+	if s.hostAuthorization.GetUntracked() != "" {
 		return
 	}
 	for _, p := range objects(s.host["pending"]) {
 		id := str(p, "id")
-		if !s.prompted[id] {
+		if id != "" && !s.prompted[id] {
 			s.prompted[id] = true
-			s.dialog.Set("authorize:" + id)
+			s.hostAuthorization.Set(id)
 			return
 		}
 	}

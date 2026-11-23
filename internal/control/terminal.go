@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/monkeyWie/reignhub/internal/terminal"
 )
@@ -80,7 +81,15 @@ func (d *Dispatcher) terminal(ctx context.Context, r Request) (any, error) {
 	case "terminal.detach":
 		return nil, d.Terminals.Detach(ctx, scope, p)
 	case "terminal.close":
-		return nil, d.Terminals.Terminate(ctx, scope, p)
+		wait, cancel := context.WithTimeout(ctx, 6*time.Second)
+		defer cancel()
+		err := d.Terminals.Terminate(wait, scope, p)
+		if errors.Is(err, context.DeadlineExceeded) {
+			err = terminal.ErrCloseUnconfirmed
+		}
+		return nil, err
+	case "terminal.closeStatus":
+		return nil, d.Terminals.CloseStatus(ctx, scope, p)
 	default:
 		return nil, errors.New("不支持的终端操作")
 	}

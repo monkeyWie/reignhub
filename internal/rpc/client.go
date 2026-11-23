@@ -51,6 +51,15 @@ type Client struct {
 }
 
 func Dial(ctx context.Context, endpoint string, observer Observer) (*Client, error) {
+	return dial(ctx, endpoint, nil, observer)
+}
+
+// DialAuthenticated connects to an app-server with WebSocket capability auth.
+func DialAuthenticated(ctx context.Context, endpoint, token string, observer Observer) (*Client, error) {
+	return dial(ctx, endpoint, http.Header{"Authorization": {"Bearer " + token}}, observer)
+}
+
+func dial(ctx context.Context, endpoint string, headers http.Header, observer Observer) (*Client, error) {
 	httpClient := &http.Client{Timeout: 10 * time.Second}
 	if strings.HasPrefix(endpoint, "unix://") {
 		path := strings.TrimPrefix(endpoint, "unix://")
@@ -59,7 +68,7 @@ func Dial(ctx context.Context, endpoint string, observer Observer) (*Client, err
 		}}
 		endpoint = "ws://localhost/"
 	}
-	conn, resp, err := websocket.Dial(ctx, endpoint, &websocket.DialOptions{HTTPClient: httpClient})
+	conn, resp, err := websocket.Dial(ctx, endpoint, &websocket.DialOptions{HTTPClient: httpClient, HTTPHeader: headers})
 	if err != nil {
 		if resp != nil && resp.Body != nil {
 			resp.Body.Close()

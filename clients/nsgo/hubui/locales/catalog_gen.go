@@ -53,6 +53,7 @@ var Parameters = map[string][]string{
 	"WorkSeconds":             {"seconds"},
 	"WorkMinutesSeconds":      {"minutes", "seconds"},
 	"WorkHoursMinutesSeconds": {"hours", "minutes", "seconds"},
+	"ControllerAuthorizedAt":  {"time_"},
 	"NumberedTerminal":        {"number"},
 	"KillTerminalTab":         {"number"},
 }
@@ -73,6 +74,7 @@ type Translation struct {
 	WorkSeconds             func(seconds int) string
 	WorkMinutesSeconds      func(minutes int, seconds int) string
 	WorkHoursMinutesSeconds func(hours int, minutes int, seconds int) string
+	ControllerAuthorizedAt  func(time_ string) string
 	NumberedTerminal        func(number int) string
 	KillTerminalTab         func(number int) string
 }
@@ -105,6 +107,10 @@ const (
 	textInstallAgent
 	textConfigureAgent
 	textOpenAgentApp
+	textLaunchCodex
+	textRestartCodex
+	textRestartCodexConfirm
+	textRestartCodexWindowsConfirm
 	textAgentConnecting
 	textSavingAgent
 	textAgentSwitchHint
@@ -200,6 +206,7 @@ const (
 	textResizeTerminal
 	textTerminalConnecting
 	textTerminalExited
+	textTerminalCloseUnconfirmed
 	textTerminalUnsupported
 	textTerminalCopy
 	textTerminalPaste
@@ -260,6 +267,10 @@ var keyOfText = [numTexts]string{
 	"installAgent",
 	"configureAgent",
 	"openAgentApp",
+	"launchCodex",
+	"restartCodex",
+	"restartCodexConfirm",
+	"restartCodexWindowsConfirm",
 	"agentConnecting",
 	"savingAgent",
 	"agentSwitchHint",
@@ -355,6 +366,7 @@ var keyOfText = [numTexts]string{
 	"resizeTerminal",
 	"terminalConnecting",
 	"terminalExited",
+	"terminalCloseUnconfirmed",
 	"terminalUnsupported",
 	"terminalCopy",
 	"terminalPaste",
@@ -413,6 +425,10 @@ var textsEn = i18n.NewTexts(""+
 	"Install"+
 	"Set up"+
 	"Open the app"+
+	"Start Codex"+
+	"Restart Codex"+
+	"ReignHub will close and reopen Codex to connect it. Restarting Codex may interrupt work in progress."+
+	"ReignHub will forcibly stop and reopen Codex to connect it. This may interrupt work in progress."+
 	"Connecting…"+
 	"Saving"+
 	"Use this Agent in ReignHub"+
@@ -508,6 +524,7 @@ var textsEn = i18n.NewTexts(""+
 	"Resize terminal"+
 	"Connecting terminal…"+
 	"Exited"+
+	"Couldn’t confirm the terminal closed"+
 	"Update ReignHub on this device to use terminals"+
 	"Copy"+
 	"Paste"+
@@ -563,6 +580,10 @@ var textsEn = i18n.NewTexts(""+
 		7,
 		6,
 		12,
+		11,
+		13,
+		100,
+		96,
 		13,
 		6,
 		26,
@@ -658,6 +679,7 @@ var textsEn = i18n.NewTexts(""+
 		15,
 		22,
 		6,
+		38,
 		47,
 		4,
 		5,
@@ -716,6 +738,10 @@ var textsZhHans = i18n.NewTexts(""+
 	"去安装"+
 	"去配置"+
 	"请打开应用"+
+	"启动 Codex"+
+	"重启 Codex"+
+	"ReignHub 将退出并重新打开 Codex 以建立连接。重启可能中断正在执行的任务。"+
+	"ReignHub 将强制结束 Codex 进程，再重新打开以建立连接。这可能中断正在执行的任务。"+
 	"连接中…"+
 	"正在保存"+
 	"在 ReignHub 中使用此 Agent"+
@@ -811,6 +837,7 @@ var textsZhHans = i18n.NewTexts(""+
 	"调整终端高度"+
 	"正在连接终端…"+
 	"已退出"+
+	"未能确认终端已关闭"+
 	"此设备尚不支持终端，请更新其 ReignHub"+
 	"复制"+
 	"粘贴"+
@@ -866,6 +893,10 @@ var textsZhHans = i18n.NewTexts(""+
 		9,
 		9,
 		15,
+		12,
+		12,
+		100,
+		112,
 		12,
 		12,
 		31,
@@ -961,6 +992,7 @@ var textsZhHans = i18n.NewTexts(""+
 		18,
 		21,
 		9,
+		27,
 		51,
 		6,
 		6,
@@ -1076,6 +1108,9 @@ func Supply(lang string, t Translation) {
 	}
 	if t.WorkHoursMinutesSeconds != nil {
 		s.WorkHoursMinutesSeconds = t.WorkHoursMinutesSeconds
+	}
+	if t.ControllerAuthorizedAt != nil {
+		s.ControllerAuthorizedAt = t.ControllerAuthorizedAt
 	}
 	if t.NumberedTerminal != nil {
 		s.NumberedTerminal = t.NumberedTerminal
@@ -1309,6 +1344,36 @@ func OpenAgentApp(cx *core.Scope) string { return For(cx).OpenAgentApp() }
 
 // OpenAgentApp is the package's OpenAgentApp in the language of msgs.
 func (msgs Messages) OpenAgentApp() string { return msgs.text(textOpenAgentApp) }
+
+// LaunchCodex says "Start Codex"
+// in the language the app shows under cx.
+func LaunchCodex(cx *core.Scope) string { return For(cx).LaunchCodex() }
+
+// LaunchCodex is the package's LaunchCodex in the language of msgs.
+func (msgs Messages) LaunchCodex() string { return msgs.text(textLaunchCodex) }
+
+// RestartCodex says "Restart Codex"
+// in the language the app shows under cx.
+func RestartCodex(cx *core.Scope) string { return For(cx).RestartCodex() }
+
+// RestartCodex is the package's RestartCodex in the language of msgs.
+func (msgs Messages) RestartCodex() string { return msgs.text(textRestartCodex) }
+
+// RestartCodexConfirm says "ReignHub will close and reopen Codex to connect it. Restarting Codex may interrupt work in progress."
+// in the language the app shows under cx.
+func RestartCodexConfirm(cx *core.Scope) string { return For(cx).RestartCodexConfirm() }
+
+// RestartCodexConfirm is the package's RestartCodexConfirm in the language of msgs.
+func (msgs Messages) RestartCodexConfirm() string { return msgs.text(textRestartCodexConfirm) }
+
+// RestartCodexWindowsConfirm says "ReignHub will forcibly stop and reopen Codex to connect it. This may interrupt work in progress."
+// in the language the app shows under cx.
+func RestartCodexWindowsConfirm(cx *core.Scope) string { return For(cx).RestartCodexWindowsConfirm() }
+
+// RestartCodexWindowsConfirm is the package's RestartCodexWindowsConfirm in the language of msgs.
+func (msgs Messages) RestartCodexWindowsConfirm() string {
+	return msgs.text(textRestartCodexWindowsConfirm)
+}
 
 // AgentConnecting says "Connecting…"
 // in the language the app shows under cx.
@@ -2019,6 +2084,30 @@ func AuthorizedControllers(cx *core.Scope) string { return For(cx).AuthorizedCon
 // AuthorizedControllers is the package's AuthorizedControllers in the language of msgs.
 func (msgs Messages) AuthorizedControllers() string { return msgs.text(textAuthorizedControllers) }
 
+// ControllerAuthorizedAt says "Authorized {time}"
+// in the language the app shows under cx.
+func ControllerAuthorizedAt(cx *core.Scope, time_ string) string {
+	return For(cx).ControllerAuthorizedAt(time_)
+}
+
+// ControllerAuthorizedAt is the package's ControllerAuthorizedAt in the language of msgs.
+func (msgs Messages) ControllerAuthorizedAt(time_ string) string {
+	if i18n.IsPseudo(msgs.lang) {
+		return i18n.Pseudo(msgs.lang, Messages{lang: Source, mark: true}.ControllerAuthorizedAt(time_))
+	}
+	for lang := msgs.lang; ; lang = i18n.Parent(lang) {
+		if f := supplied[lang].ControllerAuthorizedAt; f != nil {
+			return f(time_)
+		}
+		switch lang {
+		case "", "en":
+			return "Authorized " + msgs.arg(time_)
+		case "zh-Hans":
+			return "授权时间 · " + time_
+		}
+	}
+}
+
 // NoAuthorizedControllers says "No authorized controllers yet."
 // in the language the app shows under cx.
 func NoAuthorizedControllers(cx *core.Scope) string { return For(cx).NoAuthorizedControllers() }
@@ -2202,6 +2291,15 @@ func TerminalExited(cx *core.Scope) string { return For(cx).TerminalExited() }
 
 // TerminalExited is the package's TerminalExited in the language of msgs.
 func (msgs Messages) TerminalExited() string { return msgs.text(textTerminalExited) }
+
+// TerminalCloseUnconfirmed says "Couldn’t confirm the terminal closed"
+// in the language the app shows under cx.
+func TerminalCloseUnconfirmed(cx *core.Scope) string { return For(cx).TerminalCloseUnconfirmed() }
+
+// TerminalCloseUnconfirmed is the package's TerminalCloseUnconfirmed in the language of msgs.
+func (msgs Messages) TerminalCloseUnconfirmed() string {
+	return msgs.text(textTerminalCloseUnconfirmed)
+}
 
 // TerminalUnsupported says "Update ReignHub on this device to use terminals"
 // in the language the app shows under cx.

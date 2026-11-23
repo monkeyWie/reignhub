@@ -25,6 +25,10 @@ type Conn struct {
 	inputSeq     int64
 	inputPending bool
 	failed       bool
+	uncertain    bool
+	readCtx      context.Context
+	pauseRead    context.CancelFunc
+	readChanged  chan struct{}
 	inputMu      sync.Mutex
 	sizes        chan Size
 	ready        chan struct{}
@@ -58,7 +62,9 @@ func connect(view, request context.Context, call Call, method string, params Par
 		return nil, errors.New("无效终端响应")
 	}
 	life, cancel := context.WithCancel(view)
-	return &Conn{ctx: life, cancel: cancel, call: call, snapshot: snapshot, buffer: snapshot.Data, sizes: make(chan Size, 1), ready: make(chan struct{})}, nil
+	active, pause := context.WithCancel(life)
+	return &Conn{ctx: life, cancel: cancel, call: call, snapshot: snapshot, buffer: snapshot.Data, sizes: make(chan Size, 1), ready: make(chan struct{}),
+		readCtx: active, pauseRead: pause, readChanged: make(chan struct{})}, nil
 }
 
 // Bind is called once, before exposing the receiver, after terminal.New returns.
@@ -67,6 +73,42 @@ func (c *Conn) Bind(resize func(Size), state func(error, bool)) {
 	close(c.ready)
 	go c.resizeLoop()
 }
+
+// SetVisible pauses output reads without releasing the attachment or cancelling
+// input already sent to the host. The next read uses the last consumed frame.
+func (c *Conn) SetVisible(visible bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.ctx.Err() != nil || visible == (c.readCtx != nil) {
+		return
+	}
+	if visible {
+		c.readCtx, c.pauseRead = context.WithCancel(c.ctx)
+	} else {
+		c.pauseRead()
+		c.readCtx, c.pauseRead = nil, nil
+	}
+	close(c.readChanged)
+	c.readChanged = make(chan struct{})
+}
+
+func (c *Conn) InputUnconfirmed() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.uncertain
+}
+
+// The remote cancel frame can arrive after a resumed read. Retry only these
+// admission failures, keeping the attachment and frame cursor intact.
+func readAdmissionBusy(err error) bool {
+	type response interface{ ResponseCode() string }
+	var coded response
+	if errors.As(err, &coded) && coded.ResponseCode() == "HOST_BUSY" {
+		return true
+	}
+	return err.Error() == "终端已有读取请求"
+}
+
 func (c *Conn) params() Params {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -78,6 +120,8 @@ func (c *Conn) Read(b []byte) (int, error) {
 		return 0, c.ctx.Err()
 	case <-c.ready:
 	}
+	var interrupted bool
+	var retryUntil time.Time
 	for {
 		if err := c.ctx.Err(); err != nil {
 			return 0, err
@@ -99,11 +143,45 @@ func (c *Conn) Read(b []byte) (int, error) {
 			<-c.ctx.Done() // Keep the final host screen; do not append "disconnected".
 			return 0, c.ctx.Err()
 		}
-		out, err := c.call(c.ctx, "terminal.read", c.params())
+		c.mu.Lock()
+		readCtx, changed := c.readCtx, c.readChanged
+		c.mu.Unlock()
+		if readCtx == nil {
+			interrupted = true
+			select {
+			case <-c.ctx.Done():
+				return 0, c.ctx.Err()
+			case <-changed:
+				continue
+			}
+		}
+		out, err := c.call(readCtx, "terminal.read", c.params())
+		if readCtx.Err() != nil && c.ctx.Err() == nil {
+			interrupted = true
+			retryUntil = time.Time{}
+			continue
+		}
 		if err != nil {
+			if interrupted && readAdmissionBusy(err) {
+				if retryUntil.IsZero() {
+					retryUntil = time.Now().Add(2 * time.Second)
+				}
+				if time.Now().Before(retryUntil) {
+					timer := time.NewTimer(50 * time.Millisecond)
+					select {
+					case <-readCtx.Done():
+						timer.Stop()
+						retryUntil = time.Time{}
+					case <-timer.C:
+					}
+					continue
+				}
+			}
 			c.fail(err)
 			return 0, err
 		}
+		interrupted = false
+		retryUntil = time.Time{}
 		if out.ID != last.ID || out.Attachment != last.Attachment || out.Sequence < last.Sequence || out.Sequence > last.Sequence+1 || !out.Size.Valid() || len(out.Data) > MaxFrame {
 			err = errors.New("终端画面不连续，请重新连接")
 			c.fail(err)
@@ -213,7 +291,8 @@ func (c *Conn) fail(err error) {
 		return
 	}
 	c.failed = true
-	if c.inputPending {
+	if c.inputPending || errors.Is(err, ErrInputUnconfirmed) {
+		c.uncertain = true
 		err = ErrInputUnconfirmed
 	}
 	c.mu.Unlock()
@@ -224,7 +303,10 @@ func (c *Conn) fail(err error) {
 func (c *Conn) Done() <-chan struct{} { return c.ctx.Done() }
 func (c *Conn) Close() error {
 	c.once.Do(func() {
+		c.mu.Lock()
+		c.uncertain = c.uncertain || c.inputPending
 		c.cancel()
+		c.mu.Unlock()
 		p := c.params()
 		go func() {
 			ctx, stop := context.WithTimeout(context.Background(), 2*time.Second)

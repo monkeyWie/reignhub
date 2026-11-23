@@ -14,8 +14,10 @@ The retired ID remains reserved against custom Provider collisions.
 
 Installation can be a desktop App or a Codex executable. Enabled automatic setup
 attempts the existing IPC service without requiring a desktop App process;
-readiness requires healthy IPC and private reader connections. App, CLI and VS
-Code source metadata stays available, but the current IPC owner decides routing.
+IPC readiness requires healthy IPC and private reader connections. On Windows
+and macOS, a local desktop action can select a shared WebSocket backend when
+IPC cannot reach the owner. App, CLI and VS Code source metadata stays available,
+but the current IPC owner decides routing.
 Availability depends on that owner's IPC support, not merely shared history.
 The private `codex app-server --listen stdio://` reader/executor remains necessary
 for history, models and new sessions; removing the independent CLI integration
@@ -28,7 +30,7 @@ already be available. Mobile/browser clients remain remote controllers.
 
 - Existing Codex-owned sessions: discover the local IPC owner and follow its snapshots/patches. Send, append, stop and approval operations go to that owner.
 - Reads and new sessions: use the private app-server where required. ReignHub-owned sessions publish follower state to the App. Shutting down this executor can interrupt its tasks; lock release does not guarantee seamless continuation in the App.
-- Creation source, current owner and IPC schema version are separate facts. A read or subscription does not force `resume` or acquire a second writer. Owner discovery failures do not authorize lock takeover. An uncertain write is not replayed through a different backend.
+- Creation source, current owner and IPC schema version are separate facts. An owner lookup timeout is a definite pre-submit failure if the thread is held. For an unlocked thread, the official server can resume the same ID and must acquire its own writer lock before any turn is sent. An uncertain write is never replayed through a different backend.
 
 See [IPC routing](ipc.go), [owner publishing](ipc_owner.go) and [runtime composition](runtime.go).
 
@@ -288,8 +290,56 @@ Package discovery uses the current user's registered package names and Win32
 Process discovery uses Toolhelp and process handles; it launches no PowerShell or
 process-listing command. Private stdio backends use
 the shared `system.HideConsole` Windows adapter (`CREATE_NO_WINDOW` + `HideWindow`).
-The Codex integration attaches automatically when installed and enabled;
-it never launches or restarts the official App.
+Automatic setup only attaches to an existing IPC owner or reconnects to an
+already configured shared backend.
+
+### Desktop WebSocket fallback
+
+The local Agent list exposes Start Codex or Restart Codex on Windows and
+macOS when IPC setup fails, an existing router cannot reach a held thread,
+or the shared backend needs the desktop to relaunch. The action is hidden
+while the shared WebSocket connection is healthy.
+Other sessions remain available while recovery is offered. Restart validates
+the approved process generations and accepts those that have already exited.
+Closing the last window on Windows leaves Codex running in the tray. The Windows
+restart dialog discloses that confirming will forcibly stop Codex. ReignHub
+validates the approved main processes by executable path and creation time and
+retains their Win32 handles for termination and a bounded wait. Discovery filters
+out Electron helper processes. If a new main process appears before launch,
+ReignHub asks the user to refresh and confirm again.
+macOS uses NSRunningApplication and NSWorkspace to discover, quit, and
+launch the app. Both platforms supply the WebSocket override through the
+new process environment. Only the local desktop can use host.activate.
+
+ReignHub and Codex App initialize independent JSON-RPC connections over one
+loopback listener to a single official app-server. ReignHub supplies bearer
+authentication to the upstream server. The desktop URL contains a random
+per-launch credential because the desktop override supplies a URL without
+auth headers. The listener rejects browser Origins and unrecognized paths.
+Neither the URL nor credentials appear in status, logs or diagnostics.
+The provider reports connected after forwarding a successful response to the
+desktop's initialize request for the current launch. Desktop versions can
+proceed with requests without sending an `initialized` notification.
+
+The shared connection handles reads, new sessions, sends, interruption and
+server requests delivered to the ReignHub connection. Watches subscribe to
+loaded threads on that server. The original IPC route remains preferred
+before the explicit switch. The two servers do not transfer an active turn.
+Failed or ambiguous writes are never replayed on another connection.
+Restarting Codex while the shared backend is healthy reuses that backend.
+ReignHub reconnects to the same server after a transient local transport loss.
+ReignHub shutdown ends the shared backend and its tasks, while the desktop
+process remains open. The App needs a new launch after that backend ends.
+
+The opt-in TestSharedCodexServerWithBundledCLI uses a temporary Codex home
+and a compatible executable supplied through REIGNHUB_TEST_SHARED_CODEX_CLI.
+It verifies authentication, independent initialization, shared thread reads
+and readiness after a replacement desktop connects without an `initialized`
+notification. Windows restart tests exercise process generation validation and
+termination against a disposable child. Windows Store launch requires
+validation with the desktop App.
+The local fallback uses the existing encrypted endpoint and local activation
+contracts. Go service and Cloudflare Worker forwarding require no changes.
 
 Windows fixtures cover restricted named-pipe data exchange and a console-less
 child with redirected IO/cancellation. [Pipe fixtures](../codexipc/local_windows_test.go)

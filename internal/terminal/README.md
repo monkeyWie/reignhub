@@ -31,10 +31,13 @@ returns IDs and names. Opening the profile resolves the executable again.
 Opening reserves the ID before setup. Repeating open attaches to that process;
 failed setup can be retried. Retired IDs are retained, so a delayed open cannot
 recreate a terminated process. Setup has a ten-second host context and continues
-when the user switches tabs during startup. Hiding, switching tabs or conversations,
-or losing the connection detaches the view and preserves the shell. Closing a
-tab or using Kill Terminal ends that shell. The controller removes its tab after
-the host acknowledges termination. Host application shutdown closes all shells and
+when the user switches tabs during startup. The controller unmounts the view on
+hide or navigation and keeps recent receivers in memory. Closing a
+tab or using Kill Terminal ends that shell. The host waits for engine exit before
+recording a scoped termination acknowledgement. Accepted cleanup continues if the
+request disconnects. If the acknowledgement is lost, the controller checks the
+host's close status without replaying the write. The tab stays visible when the
+host cannot confirm termination. Host application shutdown closes all shells and
 waits under one two-second deadline. Shells and panel state do not survive app
 restart. No real Agent process is terminated by this manager.
 
@@ -48,11 +51,19 @@ cursor, modes and program colors, not an application-written terminal parser.
 Upstream OSC 52 clipboard writes are retained: a command in a trusted terminal
 can copy to the controller clipboard. Copy/paste also use the official Ref API.
 
-Only a mounted, attached receiver requests frames. Because upstream has no
-headless change subscription, a read samples Mirror at most 30 times/second and
-returns on a change or after 15 seconds. Hidden terminals keep bounded engine
-scrollback and are reconstructed when attached again; they do not run a network
-polling loop. No terminal content enters transcript caches or mutation receipts.
+The controller retains the eight most recently viewed receivers per workspace,
+including their attachment, emulator and scrollback. Switching tabs, collapsing
+the panel or moving between conversations cancels the outgoing read and pauses
+polling until the receiver is visible again. Returning to a cached receiver
+renders its current screen and scroll position immediately and resumes from its
+last frame sequence. Input already sent can finish while a tab is hidden.
+Eviction releases the attachment and receiver. Forgetting a device clears its
+cached views and receivers. Revisiting an evicted receiver or reconnecting after a
+transport failure requests a fresh host snapshot.
+
+Because upstream has no headless change subscription, a read samples Mirror at
+most 30 times/second and returns on a change or after 15 seconds. Terminal
+content remains in memory and stays outside transcript caches and mutation receipts.
 
 Output carries an attachment token and sequence. The host retains its last frame
 until the receiver acknowledges it; a cancelled/lost response cannot consume

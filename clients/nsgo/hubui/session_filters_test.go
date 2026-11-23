@@ -260,7 +260,7 @@ func TestFilterMenuKeyboardSelection(t *testing.T) {
 	app := nsgotest.Start(t, func(cx *core.Scope) core.Node {
 		s := sidebarInteractionFixture(cx)
 		s.filters.Devices = map[string]bool{"local": true}
-		return core.View{Style: fill.Merge(core.Style{Padding: core.All(24)}), Children: []core.Node{s.sessionFiltersButton(cx, "all")}}
+		return core.View{Style: fill.Merge(core.Style{Padding: core.All(24)}), Children: []core.Node{s.sessionFiltersButton(cx, "all", core.NewSignal(cx, false), func() bool { return false })}}
 	}, nsgotest.Size(800, 600), nsgotest.Environment(core.Environment{OS: core.OSMacOS, Idiom: core.IdiomDesktop}))
 	app.Press("id:session-filters")
 	app.WaitFor("id:filter-menu-device", time.Second)

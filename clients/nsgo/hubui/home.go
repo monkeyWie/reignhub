@@ -1,6 +1,11 @@
 package hubui
 
 import (
+	"cmp"
+	"reflect"
+	"slices"
+	"time"
+
 	"github.com/monkeyWie/reignhub/clients/nsgo/hubui/locales"
 	"github.com/nsgo-dev/nsgo/core"
 	"github.com/nsgo-dev/nsgo/icons/lucide"
@@ -40,7 +45,7 @@ func (s *State) localOverview(cx *core.Scope, prefix string) core.Node {
 	qr.Disabled = func() bool { s.read(); return !hasID() || len(object(s.host["qr"])) == 0 }
 	return core.View{Style: core.Style{Gap: 28, MinWidth: core.Pt(0)}, Children: []core.Node{
 		contentSection(cx, "", "",
-			row(identityGlyph(cx, Object{"platform": platformClientInfo().Platform, "kind": "native"}, 22), singleLine(cx, func() string {
+			row(identityGlyph(cx, platformIconKey(platformClientInfo().Platform), 22), singleLine(cx, func() string {
 				s.read()
 				if name := str(s.host, "name"); name != "" {
 					return name
@@ -89,6 +94,17 @@ func (s *State) localOverview(cx *core.Scope, prefix string) core.Node {
 
 // Controller identities and revocation are intentionally one level deeper.
 func (s *State) localAccess(cx *core.Scope) core.Node {
+	grants := core.NewMemoFunc(cx, func() []Object {
+		s.read()
+		rows := slices.Clone(objects(s.host["grants"]))
+		slices.SortFunc(rows, func(a, b Object) int {
+			if order := cmp.Compare(number(b, "authorizedAt"), number(a, "authorizedAt")); order != 0 {
+				return order
+			}
+			return cmp.Compare(str(a, "client"), str(b, "client"))
+		})
+		return rows
+	}, func(a, b []Object) bool { return reflect.DeepEqual(a, b) })
 	return core.View{Style: core.Style{Gap: 20}, Children: []core.Node{
 		label(cx, "首次连接需本机确认；配置密码后，输入正确密码可自动授权。", 13, true),
 		actionRow(button(cx, "set-password", "设置访问密码", nil, "outline", func() { s.settingsReturn = "local-access"; s.dialog.Set("password") }), core.Show{When: func() bool { s.read(); return flag(s.host, "passwordEnabled") }, Then: func(cx *core.Scope) core.Node {
@@ -96,11 +112,21 @@ func (s *State) localAccess(cx *core.Scope) core.Node {
 		}}),
 		sectionDivider(cx),
 		label(cx, locales.For(cx).AuthorizedControllers(), 15, false),
-		core.Show{When: func() bool { s.read(); return len(objects(s.host["grants"])) == 0 }, Then: func(cx *core.Scope) core.Node { return label(cx, locales.For(cx).NoAuthorizedControllers(), 13, true) }},
+		core.Show{When: func() bool { return len(grants.Get()) == 0 }, Then: func(cx *core.Scope) core.Node { return label(cx, locales.For(cx).NoAuthorizedControllers(), 13, true) }},
 		core.Scroll{TestID: "authorized-controllers", StyleFunc: func() core.Style {
 			return core.Style{MaxHeight: core.Pt(min(360, max(120, cx.Env().Window().Height-340))), MinHeight: core.Pt(0)}
-		}, Children: []core.Node{core.Each(func() []Object { s.read(); return objects(s.host["grants"]) }, func(g Object) string { return str(g, "client") }, func(cx *core.Scope, g func() Object, _ func() int) core.Node {
-			return row(controllerIdentity(cx, g), spacer(), s.actionButton(cx, "revoke-"+str(g(), "client"), "撤销授权", nil, "ghost", func() { s.call("revoke-"+str(g(), "client"), "host.revoke", Object{"client": g()["client"]}, nil) }))
+		}, Children: []core.Node{core.Each(grants.Get, func(g Object) string { return str(g, "client") }, func(cx *core.Scope, g func() Object, _ func() int) core.Node {
+			client := str(core.Untracked(cx, g), "client")
+			action := "revoke-" + client
+			authorizedAt := core.Show{When: func() bool { return number(g(), "authorizedAt") > 0 }, Then: func(cx *core.Scope) core.Node {
+				return singleLine(cx, func() string {
+					at := s.localTime(time.UnixMilli(number(g(), "authorizedAt")))
+					return locales.For(cx).ControllerAuthorizedAt(at.Format("2006-01-02 15:04"))
+				}, 11, true)
+			}}
+			return row(controllerIdentity(cx, g, authorizedAt), spacer(), s.actionButton(cx, action, "撤销授权", nil, "ghost", func() {
+				s.call(action, "host.revoke", Object{"client": client}, nil)
+			}))
 		})}},
 	}}
 }

@@ -4,7 +4,9 @@ package hubui
 
 import (
 	"context"
+	"path"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/monkeyWie/reignhub/clients/nsgo/hubui/locales"
@@ -15,7 +17,7 @@ import (
 )
 
 func (s *State) terminalPane(cx *core.Scope, p *terminalPanel) core.Node {
-	// Only changing the selected shell or explicitly reconnecting remounts its receiver.
+	// The selected tab mounts a view over its cached terminal receiver.
 	type attachment struct {
 		tab      *terminalTab
 		revision int
@@ -99,7 +101,7 @@ func (s *State) terminalTabButton(cx *core.Scope, p *terminalPanel, tab *termina
 		}
 	})
 	t := base.Tab{TestID: "terminal-tab-" + n, Selected: selected.Get, Label: fallback,
-		Tooltip:   tooltipCard(cx, dynamicText(cx, title, 12, false)),
+		Tooltip:   s.terminalTabTooltip(cx, tab),
 		Style:     core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Height: core.Pct(100), Gap: 6, Padding: core.Edges{Left: 8, Right: 4}, MinWidth: core.Pt(0), FlexShrink: 1},
 		StyleFunc: func() core.Style { return core.Style{FocusVisible: pressStyle(cx).FocusVisible} },
 		OnPress: func(core.PressEvent) {
@@ -123,6 +125,80 @@ func (s *State) terminalTabButton(cx *core.Scope, p *terminalPanel, tab *termina
 		}, Children: []core.Node{t, core.Show{When: func() bool { s.read(); return tab.closing }, Then: func(cx *core.Scope) core.Node {
 			return s.loadingRing("terminal-closing-"+n, msgs.TerminateTerminal(), 12)
 		}, Else: func(*core.Scope) core.Node { return close }}}}
+}
+
+func (tab *terminalTab) setTitle(title string) bool {
+	if tab.title == title {
+		return false
+	}
+	tab.title = title
+	// Interpret path syntax without resolving it on the controller's OS.
+	normalized := strings.ReplaceAll(title, "\\", "/")
+	if path.IsAbs(normalized) || (len(normalized) >= 3 && normalized[1:3] == ":/") {
+		tab.reportedPath = title
+	}
+	if shell := terminalShellLabel(path.Base(normalized)); shell != "" {
+		tab.reportedShell = shell
+	}
+	return true
+}
+
+func terminalShellLabel(title string) string {
+	switch strings.ToLower(title) {
+	case "powershell", "pwsh.exe", "pwsh":
+		return "PowerShell"
+	case "windows powershell", "powershell.exe":
+		return "Windows PowerShell"
+	case "command prompt", "cmd.exe":
+		return "Command Prompt"
+	case "wsl", "wsl.exe":
+		return "WSL"
+	case "bash", "zsh", "sh", "fish", "nu", "ksh", "dash":
+		return title
+	default:
+		return ""
+	}
+}
+
+func (s *State) terminalTabTooltip(cx *core.Scope, tab *terminalTab) base.Tooltip {
+	shell := func() string {
+		s.read()
+		if tab.profileName != "" {
+			return tab.profileName
+		}
+		if tab.reportedShell != "" {
+			return tab.reportedShell
+		}
+		return locales.For(cx).Terminal()
+	}
+	location := func() string {
+		s.read()
+		if tab.reportedPath != "" {
+			return tab.reportedPath
+		}
+		if directory := str(s.selected, "cwd"); directory != "" {
+			return directory
+		}
+		return str(s.selected, "projectDir")
+	}
+	activity := core.NewMemo(cx, func() string {
+		s.read()
+		if tab.title == location() || strings.EqualFold(tab.title, shell()) || terminalShellLabel(tab.title) == shell() {
+			return ""
+		}
+		return tab.title
+	})
+	tip := tooltipCard(cx,
+		infoRow(cx, "terminal-info-type", lucide.SquareTerminal, shell, true),
+		core.Show{When: func() bool { return location() != "" }, Then: func(cx *core.Scope) core.Node {
+			return infoRowText(cx, "terminal-info-path", lucide.Folder, dynamicText(cx, location, 12, false), false)
+		}},
+		core.Show{When: func() bool { return activity.Get() != "" }, Then: func(cx *core.Scope) core.Node {
+			return infoRowText(cx, "terminal-info-activity", lucide.Activity, dynamicText(cx, activity.Get, 12, false), false)
+		}},
+	)
+	tip.PopupStyle.Width = core.Pt(340)
+	return tip
 }
 
 // Discover choices while the pane is visible. Adding the default shell never

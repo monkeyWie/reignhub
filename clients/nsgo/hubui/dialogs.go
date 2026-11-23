@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"github.com/monkeyWie/reignhub/clients/nsgo/hubui/locales"
 	"image"
 	_ "image/jpeg"
 	_ "image/png"
@@ -14,6 +13,8 @@ import (
 	"time"
 
 	"github.com/liyue201/goqr"
+	"github.com/monkeyWie/reignhub/clients/nsgo/hubui/locales"
+	"github.com/monkeyWie/reignhub/internal/system"
 	"github.com/nsgo-dev/nsgo/base"
 	"github.com/nsgo-dev/nsgo/core"
 	"github.com/nsgo-dev/nsgo/icons/lucide"
@@ -89,8 +90,6 @@ func (s *State) dialogView(cx *core.Scope, kind string) core.Node {
 			key = "confirm-clear-cache:" + dialogTarget
 		case kind == "forget":
 			key = "confirm-forget:" + dialogTarget
-		case strings.HasPrefix(kind, "authorize:"):
-			key = "host-respond:" + strings.TrimPrefix(kind, "authorize:")
 		}
 		return key != "" && s.actionPending(key)
 	}
@@ -277,8 +276,6 @@ func (s *State) dialogView(cx *core.Scope, kind string) core.Node {
 		}
 		children = append(children, label(cx, "扫码后仍需主机确认或密码授权。", 12, true), s.copyButton(cx, "copy-pairing", "复制连接信息", "outline", func() string { return code }))
 		footer = []core.Node{button(cx, "dialog-done", "完成", nil, "primary", close)}
-	case strings.HasPrefix(kind, "authorize:"):
-		return s.hostAuthorizationDialog(cx, strings.TrimPrefix(kind, "authorize:"), close)
 	case strings.HasPrefix(kind, "activate:"):
 		provider := strings.TrimPrefix(kind, "activate:")
 		var p Object
@@ -288,13 +285,15 @@ func (s *State) dialogView(cx *core.Scope, kind string) core.Node {
 				break
 			}
 		}
-		title = "接入 " + str(p, "name")
-		children = append(children, label(cx, "通过本地 IPC 连接正在运行的官方 App，无需重启；远程新建的会话也可在 App 中查看和继续操作。", 13, false))
-		expected := p["instances"]
-		footer = append(footer, s.actionButton(cx, "confirm-activate", "确认接入", nil, "primary", func() {
-			s.runAction("confirm-activate", func(ctx context.Context) (any, error) {
-				return s.api.Call(ctx, "host.activate", Object{"provider": provider}, "", Object{"expected": expected, "confirmRestart": false})
-			}, func(any) { close(); s.poll() })
+		l := locales.For(cx)
+		title = l.RestartCodex()
+		confirm := l.RestartCodexConfirm()
+		if system.CodexRestartForceStops {
+			confirm = l.RestartCodexWindowsConfirm()
+		}
+		children = append(children, label(cx, confirm, 13, false))
+		footer = append(footer, s.actionButton(cx, "confirm-activate", title, nil, "primary", func() {
+			s.activateCodex("confirm-activate", p, true, close)
 		}))
 	case kind == "local-access":
 		title = locales.For(cx).AccessManagement()
@@ -427,6 +426,7 @@ func (s *State) dialogView(cx *core.Scope, kind string) core.Node {
 				if s.target == id {
 					s.selectDevice("")
 				}
+				s.forgetDeviceTerminals(id)
 				for key, d := range s.drafts {
 					if strings.HasPrefix(key, id+"|") {
 						for _, u := range d.Uploads {
@@ -525,6 +525,22 @@ func dialogCloseButton(cx *core.Scope, id string, close func()) core.View {
 		x.Style.Width, x.Style.Height = core.Pt(44), core.Pt(44)
 	}
 	return x
+}
+
+// Authorization has its own modal so the underlying dialog keeps its state.
+func (s *State) hostAuthorizationLayer() core.Node {
+	return core.Dynamic(func(cx *core.Scope) core.Node {
+		id := s.hostAuthorization.Get()
+		if id == "" {
+			return nil
+		}
+		return s.hostAuthorizationDialog(cx, id, func() {
+			if s.hostAuthorization.GetUntracked() == id {
+				s.hostAuthorization.Set("")
+				s.promptHost()
+			}
+		})
+	})
 }
 
 func (s *State) hostAuthorizationDialog(cx *core.Scope, id string, close func()) core.Node {
