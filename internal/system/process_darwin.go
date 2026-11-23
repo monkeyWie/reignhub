@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -52,36 +51,6 @@ func AppExecutable(app string) string {
 		}
 	}
 	return ""
-}
-
-// Discover is intentionally passive. Polling also finds launches that occurred
-// before the daemon started and works without accessibility privileges.
-func Discover(ctx context.Context, app string) ([]provider.Instance, error) {
-	instances := []provider.Instance{}
-	executable := AppExecutable(app)
-	if executable == "" {
-		return instances, nil
-	}
-	out, err := exec.CommandContext(ctx, "/bin/ps", "-axo", "pid=,ppid=,lstart=,command=").Output()
-	if err != nil {
-		return nil, err
-	}
-	for _, line := range strings.Split(string(out), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 8 {
-			continue
-		}
-		command := strings.Join(fields[7:], " ")
-		if command != executable && !strings.HasPrefix(command, executable+" ") {
-			continue
-		}
-		pid, err := strconv.Atoi(fields[0])
-		if err != nil {
-			continue
-		}
-		instances = append(instances, provider.Instance{PID: pid, StartedAt: strings.Join(fields[2:7], " "), Path: app})
-	}
-	return instances, nil
 }
 
 func ConnectDesktop(ctx context.Context, app, endpoint string, expected []provider.Instance, confirm bool) error {

@@ -1,6 +1,8 @@
 package hubui
 
 import (
+	"context"
+
 	"github.com/monkeyWie/reignhub/clients/nsgo/hubui/locales"
 	"github.com/monkeyWie/reignhub/internal/control"
 	"github.com/nsgo-dev/nsgo/base"
@@ -21,6 +23,9 @@ func agentSetup(p Object) string {
 	}
 	if str(p, "state") == "disabled" || p["enabled"] == false {
 		return "disabled"
+	}
+	if str(p, "state") == "launch-required" {
+		return "launch-codex"
 	}
 	if providerReady(p) {
 		return ""
@@ -86,6 +91,17 @@ func (s *State) agentControls(cx *core.Scope, prefix string, p func() Object, op
 		core.Dynamic(func(cx *core.Scope) core.Node {
 			l := locales.For(cx)
 			switch setup.Get() {
+			case "launch-codex", "":
+				status := p()
+				if id != "codex-app" || (setup.Get() == "" && str(status, "endpoint") != "websocket" && str(status, "endpoint") != "ipc-recovery") {
+					return nil
+				}
+				if len(objects(status["instances"])) > 0 {
+					return button(cx, prefix+"launch-codex", l.RestartCodex(), nil, "ghost", func() { open("activate:" + id) })
+				}
+				return s.actionButton(cx, prefix+"launch-codex", l.LaunchCodex(), nil, "ghost", func() {
+					s.activateCodex(prefix+"launch-codex", status, false, nil)
+				})
 			case "install":
 				return button(cx, prefix+"install-"+id, l.InstallAgent(), lucide.ArrowUpRight, "ghost", func() { cx.OpenURL(agentGuideURL(id), nil) })
 			case "configure":
@@ -126,6 +142,17 @@ func (s *State) agentControls(cx *core.Scope, prefix string, p func() Object, op
 				})
 			}},
 	}}
+}
+
+func (s *State) activateCodex(action string, p Object, restart bool, done func()) {
+	s.runAction(action, func(ctx context.Context) (any, error) {
+		return s.api.Call(ctx, "host.activate", Object{"provider": "codex-app"}, "", Object{"expected": p["instances"], "confirmRestart": restart})
+	}, func(any) {
+		if done != nil {
+			done()
+		}
+		s.poll()
+	})
 }
 
 func (s *State) agentHelp(cx *core.Scope, id string) core.Node {

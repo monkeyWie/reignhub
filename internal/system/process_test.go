@@ -15,3 +15,13 @@ func TestInstanceGenerationGuard(t *testing.T) {
 		t.Fatal("invalid comparison")
 	}
 }
+
+func TestApprovedDesktopInstancesAllowsAlreadyExitedProcess(t *testing.T) {
+	approved := []provider.Instance{{PID: 17, StartedAt: "old", Path: "app"}}
+	if !approvedDesktopInstances(approved, nil) || !approvedDesktopInstances(approved, approved) {
+		t.Fatal("rejected an approved or already exited instance")
+	}
+	if approvedDesktopInstances(approved, []provider.Instance{{PID: 17, StartedAt: "new", Path: "app"}}) {
+		t.Fatal("allowed a new instance that reused the approved PID")
+	}
+}

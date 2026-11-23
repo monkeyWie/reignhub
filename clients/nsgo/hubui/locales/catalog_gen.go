@@ -105,6 +105,9 @@ const (
 	textInstallAgent
 	textConfigureAgent
 	textOpenAgentApp
+	textLaunchCodex
+	textRestartCodex
+	textRestartCodexConfirm
 	textAgentConnecting
 	textSavingAgent
 	textAgentSwitchHint
@@ -238,6 +241,9 @@ var keyOfText = [numTexts]string{
 	"installAgent",
 	"configureAgent",
 	"openAgentApp",
+	"launchCodex",
+	"restartCodex",
+	"restartCodexConfirm",
 	"agentConnecting",
 	"savingAgent",
 	"agentSwitchHint",
@@ -369,6 +375,9 @@ var textsEn = i18n.NewTexts(""+
 	"Install"+
 	"Set up"+
 	"Open the app"+
+	"Start Codex"+
+	"Restart Codex"+
+	"ReignHub will close and reopen Codex to connect it. Restarting Codex may interrupt work in progress."+
 	"Connecting…"+
 	"Saving"+
 	"Use this Agent in ReignHub"+
@@ -497,6 +506,9 @@ var textsEn = i18n.NewTexts(""+
 		7,
 		6,
 		12,
+		11,
+		13,
+		100,
 		13,
 		6,
 		26,
@@ -628,6 +640,9 @@ var textsZhHans = i18n.NewTexts(""+
 	"去安装"+
 	"去配置"+
 	"请打开应用"+
+	"启动 Codex"+
+	"重启 Codex"+
+	"ReignHub 将退出并重新打开 Codex 以建立连接。重启可能中断正在执行的任务。"+
 	"连接中…"+
 	"正在保存"+
 	"在 ReignHub 中使用此 Agent"+
@@ -756,6 +771,9 @@ var textsZhHans = i18n.NewTexts(""+
 		9,
 		9,
 		15,
+		12,
+		12,
+		100,
 		12,
 		12,
 		31,
@@ -1177,6 +1195,27 @@ func OpenAgentApp(cx *core.Scope) string { return For(cx).OpenAgentApp() }
 
 // OpenAgentApp is the package's OpenAgentApp in the language of msgs.
 func (msgs Messages) OpenAgentApp() string { return msgs.text(textOpenAgentApp) }
+
+// LaunchCodex says "Start Codex"
+// in the language the app shows under cx.
+func LaunchCodex(cx *core.Scope) string { return For(cx).LaunchCodex() }
+
+// LaunchCodex is the package's LaunchCodex in the language of msgs.
+func (msgs Messages) LaunchCodex() string { return msgs.text(textLaunchCodex) }
+
+// RestartCodex says "Restart Codex"
+// in the language the app shows under cx.
+func RestartCodex(cx *core.Scope) string { return For(cx).RestartCodex() }
+
+// RestartCodex is the package's RestartCodex in the language of msgs.
+func (msgs Messages) RestartCodex() string { return msgs.text(textRestartCodex) }
+
+// RestartCodexConfirm says "ReignHub will close and reopen Codex to connect it. Restarting Codex may interrupt work in progress."
+// in the language the app shows under cx.
+func RestartCodexConfirm(cx *core.Scope) string { return For(cx).RestartCodexConfirm() }
+
+// RestartCodexConfirm is the package's RestartCodexConfirm in the language of msgs.
+func (msgs Messages) RestartCodexConfirm() string { return msgs.text(textRestartCodexConfirm) }
 
 // AgentConnecting says "Connecting…"
 // in the language the app shows under cx.

@@ -648,12 +648,18 @@ func (m *Manager) Local(ctx context.Context, r control.Request) (any, error) {
 		_ = m.notifyRevocation(ctx, i, revoked)
 		return nil, nil
 	case "host.enable", "host.activate":
-		m.activation.Lock()
-		defer m.activation.Unlock()
 		p := m.d.Providers[in.Provider]
 		if p == nil {
 			return nil, fmt.Errorf("未知 Agent")
 		}
+		if r.Method == "host.activate" && in.Provider == "codex-app" {
+			if !m.agentEnabled(in.Provider) {
+				return nil, fmt.Errorf("此 Agent 已在本机关闭")
+			}
+			return nil, p.ConnectDesktop(ctx, r.Expected, r.ConfirmRestart)
+		}
+		m.activation.Lock()
+		defer m.activation.Unlock()
 		if e := p.Start(ctx); e != nil {
 			return nil, e
 		}

@@ -271,13 +271,11 @@ func (s *State) dialogView(cx *core.Scope, kind string) core.Node {
 				break
 			}
 		}
-		title = "接入 " + str(p, "name")
-		children = append(children, label(cx, "通过本地 IPC 连接正在运行的官方 App，无需重启；远程新建的会话也可在 App 中查看和继续操作。", 13, false))
-		expected := p["instances"]
-		footer = append(footer, s.actionButton(cx, "confirm-activate", "确认接入", nil, "primary", func() {
-			s.runAction("confirm-activate", func(ctx context.Context) (any, error) {
-				return s.api.Call(ctx, "host.activate", Object{"provider": provider}, "", Object{"expected": expected, "confirmRestart": false})
-			}, func(any) { close(); s.poll() })
+		l := locales.For(cx)
+		title = l.RestartCodex()
+		children = append(children, label(cx, l.RestartCodexConfirm(), 13, false))
+		footer = append(footer, s.actionButton(cx, "confirm-activate", title, nil, "primary", func() {
+			s.activateCodex("confirm-activate", p, true, close)
 		}))
 	case kind == "local-access":
 		title = locales.For(cx).AccessManagement()

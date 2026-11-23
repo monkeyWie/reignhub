@@ -29,6 +29,10 @@ func ProcessStamp(ctx context.Context, pid int) (string, string, error) {
 		return "", "", err
 	}
 	defer windows.CloseHandle(h)
+	return processStamp(h)
+}
+
+func processStamp(h windows.Handle) (string, string, error) {
 	buf := make([]uint16, 32768)
 	size := uint32(len(buf))
 	if err := windows.QueryFullProcessImageName(h, 0, &buf[0], &size); err != nil {
@@ -54,6 +58,14 @@ func Discover(ctx context.Context, app string) ([]provider.Instance, error) {
 	if executable == "" {
 		return instances, nil
 	}
+	var session uint32
+	if err := windows.ProcessIdToSessionId(windows.GetCurrentProcessId(), &session); err != nil {
+		return instances, err
+	}
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		return instances, err
+	}
 	snapshot, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
 	if err != nil {
 		return instances, err
@@ -71,7 +83,11 @@ func Discover(ctx context.Context, app string) ([]provider.Instance, error) {
 		if !strings.EqualFold(windows.UTF16ToString(entry.ExeFile[:]), filepath.Base(executable)) {
 			continue
 		}
-		started, path, e := ProcessStamp(ctx, pid)
+		var processSession uint32
+		if windows.ProcessIdToSessionId(entry.ProcessID, &processSession) != nil || processSession != session {
+			continue
+		}
+		started, path, e := desktopProcess(pid, executable, user.User.Sid)
 		if e != nil {
 			// A process may exit between the snapshot and opening its handle.
 			if errors.Is(e, windows.ERROR_INVALID_PARAMETER) || errors.Is(e, errProcessExited) {
@@ -79,7 +95,7 @@ func Discover(ctx context.Context, app string) ([]provider.Instance, error) {
 			}
 			return instances, fmt.Errorf("读取 Codex App 进程 %d 失败：%w", pid, e)
 		}
-		if strings.EqualFold(filepath.Clean(path), filepath.Clean(executable)) {
+		if path != "" {
 			candidates = append(candidates, provider.Instance{PID: pid, StartedAt: started, Path: filepath.Clean(app)})
 		}
 	}
@@ -87,6 +103,67 @@ func Discover(ctx context.Context, app string) ([]provider.Instance, error) {
 		return instances, err
 	}
 	return desktopRoots(candidates, parents), nil
+}
+
+func desktopProcess(pid int, executable string, sid *windows.SID) (string, string, error) {
+	handle, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
+	if err != nil {
+		return "", "", err
+	}
+	defer windows.CloseHandle(handle)
+	started, path, err := processStamp(handle)
+	if err != nil || !strings.EqualFold(filepath.Clean(path), executable) {
+		return "", "", err
+	}
+	var token windows.Token
+	if err := windows.OpenProcessToken(handle, windows.TOKEN_QUERY, &token); err != nil {
+		return "", "", err
+	}
+	defer token.Close()
+	user, err := token.GetTokenUser()
+	if err != nil || !sid.Equals(user.User.Sid) {
+		return "", "", err
+	}
+	helper, err := electronHelper(handle)
+	if err != nil {
+		if _, _, status := processStamp(handle); errors.Is(status, errProcessExited) {
+			return "", "", status
+		}
+		return "", "", err
+	}
+	if helper {
+		return "", "", nil
+	}
+	return started, path, nil
+}
+
+// Electron subprocesses can outlive their parent. Their own Chromium process
+// type distinguishes them even after the parent is missing from the snapshot.
+func electronHelper(handle windows.Handle) (bool, error) {
+	// Windows command lines are bounded to 32,767 UTF-16 code units.
+	var buffer [65536 + unsafe.Sizeof(windows.NTUnicodeString{})]byte
+	var size uint32
+	if err := windows.NtQueryInformationProcess(handle, windows.ProcessCommandLineInformation, unsafe.Pointer(&buffer[0]), uint32(len(buffer)), &size); err != nil {
+		return false, err
+	}
+	command := (*windows.NTUnicodeString)(unsafe.Pointer(&buffer[0]))
+	if command.Buffer == nil || command.Length == 0 {
+		return false, errors.New("Windows 未返回进程启动参数")
+	}
+	args, err := windows.DecomposeCommandLine(windows.UTF16ToString(unsafe.Slice(command.Buffer, int(command.Length)/2)))
+	if err != nil {
+		return false, err
+	}
+	for _, arg := range args {
+		// argv[0] is the full executable path.
+		if arg == "--" {
+			break
+		}
+		if strings.HasPrefix(arg, "--type=") || arg == "--type" {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func desktopRoots(candidates []provider.Instance, parents map[int]int) []provider.Instance {

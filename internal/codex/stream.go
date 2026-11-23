@@ -75,6 +75,10 @@ func (p *Provider) watch(ctx context.Context, session, epoch string, after int64
 				}
 			}
 		}
+	} else if shared := p.activeShared(); shared {
+		if err := p.followShared(ctx, session); err != nil {
+			return provider.StreamBatch{}, err
+		}
 	} else if batch.Reset {
 		if _, err := p.threadClient(ctx, session); err != nil {
 			return provider.StreamBatch{}, err

@@ -82,18 +82,19 @@ type ownedThread struct {
 	sends         map[string]*ownedSend
 }
 type appIPC struct {
-	p          *Provider
-	home       string
-	queueFiles []string
-	mu         sync.Mutex
-	conn       *codexipc.Client
-	connectErr error
-	followed   map[string]*followedThread
-	owned      map[string]*ownedThread
-	ctx        context.Context
-	cancel     context.CancelFunc
-	done       chan struct{}
-	dirty      chan string
+	p                *Provider
+	home             string
+	queueFiles       []string
+	mu               sync.Mutex
+	conn             *codexipc.Client
+	connectErr       error
+	ownerUnavailable bool
+	followed         map[string]*followedThread
+	owned            map[string]*ownedThread
+	ctx              context.Context
+	cancel           context.CancelFunc
+	done             chan struct{}
+	dirty            chan string
 }
 
 func newAppIPC(p *Provider) *appIPC {
@@ -102,6 +103,12 @@ func newAppIPC(p *Provider) *appIPC {
 }
 func (b *appIPC) client() *codexipc.Client { b.mu.Lock(); defer b.mu.Unlock(); return b.conn }
 func (b *appIPC) connectionError() error   { b.mu.Lock(); defer b.mu.Unlock(); return b.connectErr }
+func (b *appIPC) needsSharedDesktop() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.ownerUnavailable
+}
+
 func (b *appIPC) connect(ctx context.Context) error {
 	c, err := codexipc.Dial(ctx, codexipc.Endpoint(b.home), b)
 	b.mu.Lock()
@@ -251,6 +258,12 @@ func (b *appIPC) followFor(ctx context.Context, id string, directory bool) (stri
 		return "", nil
 	}
 	if err != nil {
+		var unknown *codexipc.UnknownOutcome
+		if errors.As(err, &unknown) {
+			// This RPC only locates an owner. Its timeout says nothing about
+			// delivery of the user's message, which has not been submitted.
+			return "", &ownerDiscoveryError{cause: unknown.Err}
+		}
 		return "", fmt.Errorf("会话归属发现失败: %w", err)
 	}
 	if response.HandledBy == "" || response.HandledBy == c.ID() {
@@ -497,26 +510,47 @@ func (p *Provider) writeRoute(ctx context.Context, id string) (*rpc.Client, stri
 		p.mu.Unlock()
 		return c, "", nil
 	}
+	if !safeThreadID(id) {
+		return nil, "", errors.New("无效 Codex 会话 ID")
+	}
 	owner, err := b.follow(ctx, id)
-	if err != nil {
+	var discovery *ownerDiscoveryError
+	if err != nil && !errors.As(err, &discovery) {
 		return nil, "", err
 	}
 	if owner != "" {
 		return nil, owner, nil
 	}
-	if !safeThreadID(id) {
-		return nil, "", errors.New("无效 Codex 会话 ID")
+	if err := ctx.Err(); err != nil {
+		return nil, "", err
 	}
 	locked, err := codexipc.WriterLocked(filepath.Join(b.home, "thread-writer-locks", id+".lock"))
 	if err != nil {
 		return nil, "", fmt.Errorf("无法确认会话写锁: %w", err)
 	}
 	if locked {
+		b.mu.Lock()
+		b.ownerUnavailable = true
+		b.mu.Unlock()
+		if discovery != nil {
+			return nil, "", discovery
+		}
 		return nil, "", errors.New("会话仍由其他 Codex 窗口持有，但 IPC 暂不可达；不会强行接管，请在原 App 打开后重试")
 	}
+	// Resume must acquire the official server's writer lock. If another
+	// client acquired it after the probe, the resume fails before submission.
 	c, err := p.threadClient(ctx, id)
 	return c, "", err
 }
+
+type ownerDiscoveryError struct{ cause error }
+
+func (e *ownerDiscoveryError) Error() string {
+	return "操作尚未提交。暂时无法联系持有此会话的 Codex，请在原 Codex App 中继续，或在被控设备的 ReignHub 中重新接入 Codex 后重试。"
+}
+
+func (e *ownerDiscoveryError) Unwrap() error { return e.cause }
+
 func safeThreadID(id string) bool {
 	if id == "" || len(id) > 128 {
 		return false
@@ -553,7 +587,7 @@ func (p *Provider) sendInput(ctx context.Context, id string, input []any, model 
 	if model != "" {
 		params["model"] = model
 	}
-	return c.Call(ctx, "turn/start", params, nil)
+	return p.threadWrite(ctx, c, "turn/start", params, nil)
 }
 func (p *Provider) steerInput(ctx context.Context, id, turn string, input []any) error {
 	input = ipcInput(input)
@@ -586,7 +620,7 @@ func (p *Provider) steerInput(ctx context.Context, id, turn string, input []any)
 		_, err = b.request(ctx, "thread-follower-steer-turn", ipcSteerParams(state, id, input), owner)
 		return ipcWriteError("thread-follower-steer-turn", err)
 	}
-	return c.Call(ctx, "turn/steer", map[string]any{"threadId": id, "expectedTurnId": turn, "input": input}, nil)
+	return p.threadWrite(ctx, c, "turn/steer", map[string]any{"threadId": id, "expectedTurnId": turn, "input": input}, nil)
 }
 
 func ipcWriteError(method string, err error) error {

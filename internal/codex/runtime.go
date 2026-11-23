@@ -17,8 +17,25 @@ func (p *Provider) startAppServer(ctx context.Context) error {
 	p.connectMu.Lock()
 	defer p.connectMu.Unlock()
 	p.mu.Lock()
-	b, c := p.ipc, p.client
+	b, c, shared := p.ipc, p.client, p.shared
 	p.mu.Unlock()
+	if shared != nil {
+		if shared.ctx.Err() != nil {
+			return errors.New("共享 Codex 后端已停止，请通过 ReignHub 重启 Codex")
+		}
+		if c != nil && c.Alive() {
+			return nil
+		}
+		setup, stop := context.WithTimeout(ctx, 3*time.Second)
+		defer stop()
+		observe, publish := p.runtimeObserver()
+		c, err := rpc.DialAuthenticated(setup, shared.address+shared.hubPath, shared.token, observe)
+		if err != nil {
+			return errors.New("共享 Codex 后端未完成初始化")
+		}
+		p.useShared(shared, c, publish)
+		return nil
+	}
 	if b == nil {
 		b = newAppIPC(p)
 		p.mu.Lock()
@@ -59,7 +76,8 @@ func (p *Provider) startAppServer(ctx context.Context) error {
 	cmd.Stderr = logFile
 	setup, stop := context.WithTimeout(ctx, 10*time.Second)
 	defer stop()
-	c, err = rpc.StartProcess(setup, cmd, p.observe)
+	observe, publish := p.runtimeObserver()
+	c, err = rpc.StartProcess(setup, cmd, observe)
 	if err != nil {
 		_ = logFile.Close()
 		return fmt.Errorf("启动 Codex 私有后端失败: %w", err)
@@ -73,15 +91,11 @@ func (p *Provider) startAppServer(ctx context.Context) error {
 	p.created = map[string]*rpc.Client{}
 	p.lastError = ""
 	p.mu.Unlock()
+	publish(c)
 	go func() {
 		<-c.Done()
 		_ = logFile.Close()
-		p.mu.Lock()
-		current := p.client == c
-		p.mu.Unlock()
-		if current {
-			p.clearRoute("service")
-		}
+		p.clearRuntime(c)
 	}()
 	return nil
 }

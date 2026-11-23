@@ -134,7 +134,8 @@ func bundledCLIPaths(app string) []string {
 	if executable == "" {
 		return nil
 	}
-	return []string{filepath.Join(filepath.Dir(executable), "resources", "codex.exe")}
+	resources := filepath.Join(filepath.Dir(executable), "resources")
+	return []string{filepath.Join(resources, "codex-cli", "bin", "codex.exe"), filepath.Join(resources, "codex.exe")}
 }
 
 func isExecutable(st os.FileInfo) bool {

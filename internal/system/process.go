@@ -3,6 +3,7 @@ package system
 import (
 	"os"
 	"os/exec"
+	"slices"
 
 	"github.com/monkeyWie/reignhub/internal/provider"
 )
@@ -34,6 +35,17 @@ func SameInstances(a, b []provider.Instance) bool {
 			}
 		}
 		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+// A user may quit an approved process before the action is dispatched. Any
+// process still present must match one of the explicitly approved generations.
+func approvedDesktopInstances(expected, current []provider.Instance) bool {
+	for _, instance := range current {
+		if !slices.Contains(expected, instance) {
 			return false
 		}
 	}

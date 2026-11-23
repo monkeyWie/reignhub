@@ -4,10 +4,13 @@ package codex
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -71,6 +74,61 @@ func TestIPCLockedButUndiscoverableThreadIsNeverResumed(t *testing.T) {
 		t.Fatalf("unsafe route: %v", err)
 	}
 }
+func TestIPCOwnerTimeoutThenWriterRelease(t *testing.T) {
+	p := New(config.Config{}, "", events.New())
+	var mu sync.Mutex
+	var calls []string
+	backendFixture(t, p, func(m rpc.Message) (any, *rpc.Error) {
+		mu.Lock()
+		calls = append(calls, m.Method)
+		mu.Unlock()
+		return map[string]any{}, nil
+	})
+	f := attachIPCFixture(t, p, func(m codexipc.Message) (codexipc.Message, bool) {
+		if m.Method == "thread-owner-discovery" {
+			return codexipc.Message{ResultType: "error", Error: "request-timeout"}, true
+		}
+		return codexipc.Message{}, false
+	})
+	dir := filepath.Join(f.b.home, "thread-writer-locks")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.Create(filepath.Join(dir, "held.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err != nil {
+		t.Fatal(err)
+	}
+	ctx, stop := context.WithTimeout(context.Background(), 4*time.Second)
+	defer stop()
+	err = p.Send(ctx, "held", "first attempt")
+	var discovery *ownerDiscoveryError
+	var unknown *codexipc.UnknownOutcome
+	if !errors.As(err, &discovery) || errors.As(err, &unknown) || !f.b.needsSharedDesktop() {
+		t.Fatalf("expected a definite pre-submit failure and recovery action: %v", err)
+	}
+	mu.Lock()
+	count := len(calls)
+	mu.Unlock()
+	if count != 0 {
+		t.Fatal("the held writer received a competing resume or turn")
+	}
+	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_UN); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Send(ctx, "held", "retry"); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !reflect.DeepEqual(calls, []string{"thread/resume", "turn/start"}) {
+		t.Fatalf("expected one resume and one turn for the unlocked thread, got %v", calls)
+	}
+}
+
 func TestPrivateRuntimeParentFixture(t *testing.T) {
 	if os.Getenv("REIGN_TEST_STDIO_PARENT") != "1" {
 		return
