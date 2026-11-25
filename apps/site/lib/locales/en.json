@@ -354,5 +354,20 @@
   "打开会话时先读取近期消息，滚动时再加载相邻内容。查看 macOS 上的测量场景、内存占用和采样方法。": "Sessions load recent messages first and fetch nearby history as you scroll. See the memory measurements and sampling method on macOS.",
   "Go 服务按系统和 CPU 架构打包，内含程序和 config.json。": "Each Go archive contains the executable and config.json for your OS and CPU.",
   "在桌面上聚合本地和已配对电脑的 Agent 会话，用手机或浏览器继续同一个项目。": "Bring sessions from local and paired computers into your desktop workspace. Continue the same project on mobile or Web.",
-  "安装包大小见上方各平台链接。macOS 预览构建的内存测量见": "Each download lists its size. For macOS preview memory measurements, see"
+  "安装包大小见上方各平台链接。macOS 预览构建的内存测量见": "Each download lists its size. For macOS preview memory measurements, see",
+  "一个工作台，": "One workspace.",
+  "随处接着做。": "Every screen.",
+  "在电脑上运行 Codex、Claude Code 和 Pi，在手机或浏览器里继续同一个会话。": "Run Codex, Claude Code and Pi on your computer. Pick up the same conversation on your phone or in a browser.",
+  "离开电脑，工作继续。": "Step away from your desk.",
+  "在项目目录打开 Shell。换一台设备，也能接着看命令输出。": "Open a shell in your project directory. Switch devices and pick up the output where you left off.",
+  "设备之间，端到端加密。": "Private between devices.",
+  "设备优先直连。需要中继时，会话内容和附件仍然只有配对设备能读取。": "Paired devices connect directly when possible. Even over a relay, only those devices can read your messages and files.",
+  "让上下方向键可以切换搜索结果。": "Let me navigate search results with the arrow keys.",
+  "方向键现在可以移动选中项，按回车打开结果。": "Arrow keys move the selection. Press Enter to open a result.",
+  "检查邮箱验证码过期后的提示。": "Check the sign-in flow when an email code expires.",
+  "验证码过期时，登录页会显示重新发送入口。": "The sign-in page now offers to resend an expired code.",
+  "把这个场景加进测试。": "Add a test for that flow.",
+  "整理这次发布的安装步骤。": "Document the installation steps for this release.",
+  "安装文档已经按平台列出下载和启动步骤。": "The guide now lists download and launch steps for each platform.",
+  "补上 Linux 的安装示例。": "Add a Linux install example."
 }

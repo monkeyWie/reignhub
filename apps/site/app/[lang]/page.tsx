@@ -5,21 +5,17 @@ import { LocalizedLink as Link } from "../../components/locale";
 import {
   ArrowRight,
   ArrowUpRight,
-  Download,
-  FolderGit2,
-  MessagesSquare,
-  Network,
-  Terminal,
-  Cpu,
-  PackageOpen,
-  Server,
   Cloud,
+  Download,
+  LockKeyhole,
   Monitor,
+  Server,
   Smartphone,
+  Terminal,
 } from "lucide-react";
+import { WorkspaceDemo } from "../../components/workspace-demo";
 import { SiteShell } from "../../components/site";
 import { PlatformIcon } from "../../components/platform-icon";
-import brandPaths from "../../../../internal/brandicons/paths.json";
 import "./home.css";
 export default async function Home({
   params,
@@ -31,7 +27,7 @@ export default async function Home({
   const t = translate(lang);
   return (
     <SiteShell>
-      <main id="main">
+      <main id="main" className="atlas-home">
         {siteOrigin && (
           <script
             type="application/ld+json"
@@ -47,67 +43,32 @@ export default async function Home({
             }}
           />
         )}
-        <section className="access-hero site-width">
-          <div className="access-intro">
+        <section className="atlas-hero site-width">
+          <div className="atlas-intro">
             <h1>
-              {t("你的 Agent")}
+              {t("一个工作台，")}
               <br />
-              <em>{t("聚合工作台。")}</em>
+              <em>{t("随处接着做。")}</em>
             </h1>
-            <p>
-              {t(
-                "把 Codex、Claude Code、Pi 的会话放进同一个项目视图。在电脑上安排任务，在手机或浏览器里接着做。",
-              )}
-            </p>
-            <div className="site-actions">
-              <Link className="button primary" href="/download">
-                <Download size={16} />
-                {t("下载 ReignHub")}
-              </Link>
-              <Link className="button" href="/chat">
-                {t("在浏览器打开")}
-                <ArrowUpRight size={16} />
-              </Link>
+            <div className="atlas-pitch">
+              <p>
+                {t(
+                  "在电脑上运行 Codex、Claude Code 和 Pi，在手机或浏览器里继续同一个会话。",
+                )}
+              </p>
+              <div className="site-actions">
+                <Link className="button primary" href="/download">
+                  <Download size={16} />
+                  {t("下载 ReignHub")}
+                </Link>
+                <Link className="atlas-inline" href="/chat">
+                  {t("在浏览器打开")}
+                  <ArrowUpRight size={16} />
+                </Link>
+              </div>
             </div>
           </div>
-          <figure className="session-scene">
-            <figcaption>{t("工作台示例")}</figcaption>
-            <div className="session-sheet">
-              <div className="sheet-bar">
-                <span>
-                  <Monitor size={15} /> MacBook Pro
-                </span>
-                <span className="sheet-path">~/atlas</span>
-              </div>
-              <strong className="sheet-title">atlas</strong>
-              <small>{t("项目会话")}</small>
-              <ul className="sheet-sessions">
-                {(
-                  [
-                    ["openai", "Codex", t("搜索栏的键盘导航")],
-                    ["claude", "Claude Code", t("复核登录流程")],
-                    ["pi", "Pi", t("整理发布清单")],
-                  ] as const
-                ).map(([brand, agent, title]) => (
-                  <li key={brand}>
-                    <svg viewBox="0 0 24 24" aria-hidden="true">
-                      <path fill="currentColor" d={brandPaths[brand]} />
-                    </svg>
-                    <span>{title}</span>
-                    <small>{agent}</small>
-                  </li>
-                ))}
-              </ul>
-            </div>
-            <div className="session-followup">
-              <span>
-                <Smartphone size={15} />
-                {t("来自手机")}
-                <time>14:32</time>
-              </span>
-              <p>{t("再测一下没有结果的情况。")}</p>
-            </div>
-          </figure>
+          <WorkspaceDemo />
         </section>
         <nav
           className="access-platforms site-width"
@@ -129,68 +90,57 @@ export default async function Home({
             </Link>
           ))}
         </nav>
-        <section className="access-work site-width">
-          <h2>{t("从项目到终端。")}</h2>
-          <div className="access-steps">
-            {[
-              {
-                Icon: FolderGit2,
-                title: t("打开你的项目"),
-                body: t(
-                  "按工作目录找到 Codex、Pi 或 ACP Agent 的会话。代码和模型凭证留在运行 Agent 的电脑上。",
-                ),
-                href: "/docs/agents",
-              },
-              {
-                Icon: MessagesSquare,
-                title: t("看进度，回消息"),
-                body: t(
-                  "在另一台设备上读最新回复、查看文件，或给 Agent 发下一条指令。",
-                ),
-                href: "/docs/guides/sessions",
-              },
-              {
-                Icon: Terminal,
-                title: t("远程终端"),
-                body: t(
-                  "从桌面会话打开项目目录里的 Shell。切换终端标签或会话后，命令会继续在原电脑运行。",
-                ),
-                href: "/docs/guides/terminal",
-              },
-              {
-                Icon: Network,
-                title: t("P2P 直连"),
-                body: t(
-                  "设备优先尝试直连，按网络条件选择可用路径。通过中继连接时，会话与附件同样端到端加密。",
-                ),
-                href: "/docs/guides/connections",
-              },
-              {
-                Icon: PackageOpen,
-                title: t("原生 UI 与包体积"),
-                body: t(
-                  "桌面和手机使用 NSGo 原生界面。下载页列出各平台安装包的实际大小，浏览器可直接打开 Web 工作台。",
-                ),
-                href: "/download",
-              },
-              {
-                Icon: Cpu,
-                title: t("按需使用内存"),
-                body: t(
-                  "打开会话时先读取近期消息，滚动时再加载相邻内容。查看 macOS 上的测量场景、内存占用和采样方法。",
-                ),
-                href: "/docs/architecture/performance",
-              },
-            ].map(({ Icon, title, body, href }) => (
-              <Link href={href} key={href}>
-                <Icon size={23} />
-                <h3>
-                  {title}
-                  <ArrowUpRight size={16} />
-                </h3>
-                <p>{body}</p>
-              </Link>
-            ))}
+        <section className="atlas-work site-width">
+          <h2>{t("离开电脑，工作继续。")}</h2>
+          <div className="atlas-cards">
+            <Link className="atlas-feature" href="/docs/guides/terminal">
+              <div className="atlas-terminal" aria-hidden="true">
+                <span>
+                  <Terminal size={15} /> atlas <i>zsh</i>
+                </span>
+                <code>
+                  <em>~/atlas</em> $ pnpm test
+                  <br />
+                  <b>✓</b> search.test.ts
+                  <br />
+                  <b>✓</b> auth.test.ts
+                  <br />
+                  <br />
+                  <b>Tests</b>　12 passed
+                </code>
+              </div>
+              <h3>
+                {t("远程终端")}
+                <ArrowUpRight />
+              </h3>
+              <p>
+                {t("在项目目录打开 Shell。换一台设备，也能接着看命令输出。")}
+              </p>
+            </Link>
+            <Link className="atlas-feature" href="/docs/guides/connections">
+              <div className="atlas-network" aria-hidden="true">
+                <span>
+                  <Monitor />
+                </span>
+                <i />
+                <b>
+                  <LockKeyhole size={16} />
+                </b>
+                <i />
+                <span>
+                  <Smartphone />
+                </span>
+              </div>
+              <h3>
+                {t("设备之间，端到端加密。")}
+                <ArrowUpRight />
+              </h3>
+              <p>
+                {t(
+                  "设备优先直连。需要中继时，会话内容和附件仍然只有配对设备能读取。",
+                )}
+              </p>
+            </Link>
           </div>
         </section>
         <section className="access-host site-width">
