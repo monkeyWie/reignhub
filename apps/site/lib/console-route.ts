@@ -16,7 +16,7 @@ export async function handleConsole(
   }
   if (url.pathname.startsWith("/chat")) {
     url.pathname = "/web";
-    return Response.redirect(url, 308);
+    return Response.redirect(url.href, 308);
   }
   url.pathname = "/chat";
   return serveConsole(new Request(url, request), env);
