@@ -387,3 +387,10 @@ func TestSendFirstFrameDoesNotSerializeHistoryOrRehashUploads(t *testing.T) {
 	}
 	close(f.release)
 }
+
+func TestUserBubblePreservesTypedLineBreaks(t *testing.T) {
+	const message = "生成链接\nhttps://example.com/first.zip\nhttps://example.com/second.xla"
+	app, _ := conversationFixture(t, newDemoAPI(), 720, outgoingTranscript(Object{"id": "prompt", "role": "user", "text": strings.ReplaceAll(message, "\n", "\r\n")}), true)
+	app.WaitFor("text:"+message, time.Second)
+	app.Screenshot("user-message-line-breaks")
+}

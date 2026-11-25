@@ -19,23 +19,74 @@ func (p *Provider) startAppServer(ctx context.Context) error {
 	p.mu.Lock()
 	b, c, shared := p.ipc, p.client, p.shared
 	p.mu.Unlock()
-	if shared != nil {
-		if shared.ctx.Err() != nil {
-			return errors.New("共享 Codex 后端已停止，请通过 ReignHub 重启 Codex")
-		}
-		if c != nil && c.Alive() {
+	if c != nil && c.Alive() {
+		if shared != nil {
 			return nil
 		}
-		setup, stop := context.WithTimeout(ctx, 3*time.Second)
-		defer stop()
-		observe, publish := p.runtimeObserver()
-		c, err := rpc.DialAuthenticated(setup, shared.address+shared.hubPath, shared.token, observe)
-		if err != nil {
-			return errors.New("共享 Codex 后端未完成初始化")
+		if b != nil {
+			if ipc := b.client(); ipc != nil && ipc.Alive() {
+				return nil
+			}
 		}
-		p.useShared(shared, c, publish)
+	}
+	if shared != nil {
+		return p.attachShared(ctx, shared)
+	}
+	var raw []byte
+	if system.CodexSharedDesktop && p.cfg.DataDir != "" {
+		var err error
+		raw, err = readSharedEndpoint(ctx, p.cfg.DataDir)
+		if err != nil {
+			return err
+		}
+	}
+	candidate := savedConnection(raw)
+	restore := func() bool {
+		if candidate == nil {
+			return false
+		}
+		if candidate.waitDesktop(ctx) && p.attachShared(ctx, candidate) == nil {
+			return true
+		}
+		candidate.http.CloseIdleConnections()
+		return false
+	}
+	ipcFirst := candidate == nil || candidate.PreferIPC
+	if !ipcFirst && restore() {
 		return nil
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	err := p.startIPC(ctx, b, c)
+	usingIPC := err == nil
+	if err != nil && (!ipcFirst || !restore()) {
+		return err
+	}
+	if candidate != nil && usingIPC != candidate.PreferIPC {
+		record := candidate.sharedEndpoint
+		record.PreferIPC = usingIPC
+		return saveSharedEndpoint(ctx, p.cfg.DataDir, raw, record)
+	}
+	return nil
+}
+
+func (p *Provider) attachShared(ctx context.Context, shared *sharedConnection) error {
+	setup, stop := context.WithTimeout(ctx, 2*time.Second)
+	defer stop()
+	observe, publish := p.runtimeObserver()
+	client, err := shared.dial(setup, observe)
+	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return errors.New("共享 Codex 后端暂时无法连接")
+	}
+	p.useShared(shared, client, publish)
+	return nil
+}
+
+func (p *Provider) startIPC(ctx context.Context, b *appIPC, c *rpc.Client) error {
 	if b == nil {
 		b = newAppIPC(p)
 		p.mu.Lock()
@@ -89,6 +140,7 @@ func (p *Provider) startAppServer(ctx context.Context) error {
 	p.client = c
 	p.endpoint = "stdio"
 	p.created = map[string]*rpc.Client{}
+	p.composerSettings = nil
 	p.lastError = ""
 	p.mu.Unlock()
 	publish(c)

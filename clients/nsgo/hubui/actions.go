@@ -21,6 +21,20 @@ func (s *State) runAction(key string, work func(context.Context) (any, error), d
 }
 
 func (s *State) runScopedAction(owner context.Context, key string, showError bool, work func(context.Context) (any, error), done func(any), current ...func() bool) {
+	s.runActionResult(owner, key, showError, work, func(v any, err error) {
+		if owner.Err() != nil || len(current) > 0 && !current[0]() {
+			return
+		}
+		if err != nil && showError {
+			s.error, s.failure = err.Error(), nil
+			_ = errors.As(err, &s.failure)
+		} else if err == nil && done != nil {
+			done(v)
+		}
+	})
+}
+
+func (s *State) runActionResult(owner context.Context, key string, clearError bool, work func(context.Context) (any, error), finish func(any, error)) {
 	if owner.Err() != nil || s.actionPending(key) {
 		return
 	}
@@ -28,7 +42,7 @@ func (s *State) runScopedAction(owner context.Context, key string, showError boo
 		s.actions = map[string]bool{}
 	}
 	s.actions[key] = true
-	if showError {
+	if clearError {
 		s.error, s.failure = "", nil
 	}
 	s.changed()
@@ -41,13 +55,7 @@ func (s *State) runScopedAction(owner context.Context, key string, showError boo
 			if s.ctx.Err() != nil {
 				return
 			}
-			valid := owner.Err() == nil && (len(current) == 0 || current[0]())
-			if valid && err != nil && showError {
-				s.error, s.failure = err.Error(), nil
-				_ = errors.As(err, &s.failure)
-			} else if valid && err == nil && done != nil {
-				done(v)
-			}
+			finish(v, err)
 			s.changed()
 		})
 	}()
@@ -105,6 +113,9 @@ func filledButtonStyle(cx *core.Scope) core.Style {
 func (s *State) approvalKey(a Object) string { return "approval:" + s.key() + ":" + str(a, "id") }
 
 func (s *State) approvalAction(a, decision Object) {
+	if !s.canWriteSession() {
+		return
+	}
 	key, target, p, id := s.key(), s.target, str(s.selected, "providerId"), str(s.selected, "id")
 	s.runAction(s.approvalKey(a), func(ctx context.Context) (any, error) {
 		return rpc(ctx, s.api, target, p, id, "decide", Object{"approval": a["id"], "decision": decision})
@@ -139,8 +150,13 @@ func contextualAffordance(cx *core.Scope, group string, touchVisible bool) core.
 	return core.Style{Opacity: core.Alpha(0), PointerEvents: core.PointerEventsNone, GroupStyle: &core.GroupStyle{Name: group, Hover: shown, FocusWithin: shown}}
 }
 func contextualIconButton(cx *core.Scope, id, title string, icon func() *core.SVG, action func()) core.View {
-	v := labelledIconButton(cx, id, title, icon, action).(core.View)
-	tip := tooltipCard(cx, label(cx, title, 12, false))
+	return contextualIconButtonWithLabel(cx, id, label(cx, title, 12, false), icon, action)
+}
+
+func contextualIconButtonWithLabel(cx *core.Scope, id string, title core.Text, icon func() *core.SVG, action func()) core.View {
+	v := button(cx, id, "", icon, "ghost", action).(core.View)
+	v.Label, v.LabelFunc = title.Content, title.ContentFunc
+	tip := tooltipCard(cx, title)
 	tip.Placement, tip.Offset = core.PlaceTop, 6
 	tip.PopupStyle.Padding, tip.PopupStyle.CornerRadius = core.Symmetric(5, 8), 6
 	v.Tooltip = tip

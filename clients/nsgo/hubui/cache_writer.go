@@ -121,10 +121,10 @@ func (w *snapshotWriter) save(ctx context.Context, key persistence.Session, prev
 		if persistence.OnlyOlderPagesChanged(revision, page.Revision) && !refresh {
 			// Reuse the original row delta. Diffing the newly read page against
 			// the old UI window would delete the prefix that just arrived.
-			value["nextCursor"] = current["nextCursor"]
+			value["nextCursor"], value["partialTurn"] = current["nextCursor"], current["partialTurn"]
 			value["_localOlder"] = flag(current, "_localOlder") || persistence.Origin(current).Less(persistence.Origin(value))
 			patch = delta
-			patch.Head["nextCursor"] = current["nextCursor"]
+			patch.Head["nextCursor"], patch.Head["partialTurn"] = current["nextCursor"], current["partialTurn"]
 			patch.Base, patch.Replace = page.Revision, false
 		} else {
 			refresh = !deliveryOnly
@@ -148,7 +148,15 @@ func snapshotWindow(previous, input Object) Object {
 	if !flag(value, "_baseline") && str(previous, "streamEpoch") == str(value, "streamEpoch") &&
 		!after.Less(before) && (flag(previous, "_localOlder") || before.Less(after)) &&
 		offset < len(priorTurns) && len(nextTurns) > 0 && str(priorTurns[offset], "id") == str(nextTurns[0], "id") {
-		value["nextCursor"], value["_localOlder"] = previous["nextCursor"], true
+		// The turn ID alone cannot place a suffix inside a long turn.
+		rows := objects(nextTurns[0]["items"])
+		overlap := len(rows) == 0 && str(value, "partialTurn") == ""
+		if len(rows) > 0 {
+			overlap = historyItemIndex(objects(priorTurns[offset]["items"]), str(rows[0], "id")) >= 0
+		}
+		if overlap {
+			value["nextCursor"], value["partialTurn"], value["_localOlder"] = previous["nextCursor"], previous["partialTurn"], true
+		}
 	}
 	return value
 }
@@ -289,7 +297,7 @@ func (s *State) historySaved(w snapshotWrite, tail Object, err error) {
 			t[key] = tail[key]
 		}
 		if str(t, "nextCursor") == str(w.transcript, "nextCursor") {
-			t["nextCursor"] = tail["nextCursor"]
+			t["nextCursor"], t["partialTurn"] = tail["nextCursor"], tail["partialTurn"]
 		}
 		delete(t, "_baseline")
 		s.transcript = t

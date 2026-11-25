@@ -20,6 +20,7 @@ import (
 // Reproduce Codex's deferred materialization: thread/start subscribes the
 // creating connection, but resume/turns-list cannot read a rollout yet.
 func TestNewThreadFirstSendDoesNotResumeUnmaterializedHistory(t *testing.T) {
+	t.Setenv("CODEX_HOME", t.TempDir())
 	for _, attachments := range []bool{false, true} {
 		t.Run(map[bool]string{false: "text", true: "attachments"}[attachments], func(t *testing.T) {
 			var starts, resumes, sends atomic.Int32

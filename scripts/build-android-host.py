@@ -4,7 +4,7 @@
 Use the Android SDK to compile the manifest (including service declarations)
 and sign with the existing project identity, supplied by CI for releases.
 """
-import argparse, hashlib, os, pathlib, re, shutil, subprocess, tempfile, urllib.request, zipfile
+import argparse, hashlib, os, pathlib, re, shutil, subprocess, tempfile, zipfile
 
 root = pathlib.Path(__file__).resolve().parent.parent / 'clients/nsgo'
 parser = argparse.ArgumentParser()
@@ -27,16 +27,7 @@ sdk = pathlib.Path(os.environ.get('ANDROID_HOME', str(pathlib.Path.home()/'Libra
 platforms = sorted(sdk.glob('platforms/android-*/android.jar'))
 d8s = sorted(sdk.glob('build-tools/*/d8'))
 if not platforms or not d8s or not shutil.which('javac'):
-    raise SystemExit('Native QR host requires JDK 17+ and an Android SDK (ANDROID_HOME).')
-cache = root/'.nsgo/native-android'
-cache.mkdir(parents=True, exist_ok=True)
-zxing = cache/'zxing-core-3.5.3.jar'
-expected = '8d8064c1636fdaef7189dd9055c7d59950a8940a12f2293956446ec3c109fd82'
-if not zxing.exists():
-    with urllib.request.urlopen('https://repo.maven.apache.org/maven2/com/google/zxing/core/3.5.3/core-3.5.3.jar') as r:
-        zxing.write_bytes(r.read())
-if hashlib.sha256(zxing.read_bytes()).hexdigest() != expected:
-    raise SystemExit('ZXing dependency checksum mismatch')
+    raise SystemExit('Native Android host requires JDK 17+ and an Android SDK (ANDROID_HOME).')
 for target in android:
     with tempfile.TemporaryDirectory(prefix='reignhub-native-android-') as tmp:
         tmp = pathlib.Path(tmp)
@@ -47,8 +38,8 @@ for target in android:
         classes = tmp/'classes'; classes.mkdir()
         sources = list((root/'native/android').rglob('*.java'))
         jar = str(platforms[-1])
-        subprocess.run(['javac','-nowarn','--release','17','-classpath',os.pathsep.join([jar,str(tmp/'classes.jar'),str(zxing)]),'-d',str(classes),*map(str,sources)],check=True)
-        subprocess.run([str(d8s[-1]),'--lib',jar,'--min-api','28','--output',str(tmp),str(tmp/'classes.jar'),str(zxing),*map(str,classes.rglob('*.class'))],check=True)
+        subprocess.run(['javac','-nowarn','--release','17','-classpath',os.pathsep.join([jar,str(tmp/'classes.jar')]),'-d',str(classes),*map(str,sources)],check=True)
+        subprocess.run([str(d8s[-1]),'--lib',jar,'--min-api','28','--output',str(tmp),str(tmp/'classes.jar'),*map(str,classes.rglob('*.class'))],check=True)
         matches = list(out.glob(f'{name}-{version or "*"}-{target}/{name}.apk'))
         if len(matches) != 1:
             raise SystemExit(f'Expected one {target} APK in {out}, found {len(matches)}')
@@ -82,7 +73,6 @@ for target in android:
                 entry.compress_type = zipfile.ZIP_STORED
                 dest.writestr(entry,binary)
             dest.write(tmp/'classes.dex','classes.dex',compress_type=zipfile.ZIP_DEFLATED)
-            dest.write(root/'native/android/THIRD_PARTY_NOTICES.txt','assets/ras/THIRD_PARTY_NOTICES.txt')
         aligned = tmp/'aligned.apk'
         subprocess.run([str(tools/'zipalign'),'-p','-f','4',str(unsigned),str(aligned)],check=True)
         identity = root/'.nsgo/android/debug.pem'

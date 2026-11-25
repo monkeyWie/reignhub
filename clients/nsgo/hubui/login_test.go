@@ -25,9 +25,17 @@ func TestEmailSignInCodeAndRetry(t *testing.T) {
 	const email = "alex@example.com"
 	const otp = "id:account-otp >> label:/.+/"
 	app.Type("id:account-email", email)
+	field := app.Find("id:account-email").Input
+	if field.CaretColor != field.Style.Color || field.AccentColor != field.Style.Color || field.AutoCapitalize != core.AutoCapitalizeNone {
+		t.Fatal("email editor must use foreground for caret and composition and preserve typed case")
+	}
 	app.Screenshot("email-sign-in")
 	app.Press("id:account-have-code")
 	app.Type(otp, "01")
+	cell := app.Find("id:account-otp").Children[0].Children[2]
+	if app.Find(otp).Input.AccentColor != field.Style.Color || len(cell.Children) != 1 || cell.Children[0].Style.Background != field.Style.Color {
+		t.Fatal("the code field must use the same neutral color for its drawn caret and input method")
+	}
 	app.Press("id:account-edit-email")
 	if app.Find("id:account-email").Text != email {
 		t.Fatal("changing email discarded the address")

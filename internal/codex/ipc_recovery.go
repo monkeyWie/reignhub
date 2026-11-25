@@ -55,7 +55,7 @@ func (b *appIPC) refreshFollower(ctx context.Context, id string) error {
 
 	attempt, cancel := context.WithTimeout(ctx, 5*time.Second)
 	stop := context.AfterFunc(b.ctx, cancel)
-	owner, err := b.follow(attempt, id)
+	owner, err := b.followForRead(attempt, id, false)
 	if err == nil && owner == "" {
 		// Definitive discovery found no owner. Retire the old projection so a
 		// persisted-history read can recover without trusting stale running state.

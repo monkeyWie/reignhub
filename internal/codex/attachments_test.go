@@ -68,7 +68,7 @@ func TestTranscriptAttachmentsAndSourceLifetime(t *testing.T) {
 	}
 }
 
-func TestSourceLocationLinksExportActualFileInline(t *testing.T) {
+func TestSourceLocationLinksStayInText(t *testing.T) {
 	cwd := t.TempDir()
 	readme := filepath.Join(cwd, "README.md")
 	// File URLs use forward slashes and an empty authority, including on Windows.
@@ -81,13 +81,13 @@ func TestSourceLocationLinksExportActualFileInline(t *testing.T) {
 		name, destination string
 		wantAttachments   int
 	}{
-		{"relative line", "README.md:3", 1},
-		{"absolute line", readme + ":3", 1},
-		{"line and column", readme + ":3:5", 1},
-		{"file URL line", readmeURL.String() + ":3", 1},
-		{"line anchor", "README.md#L3", 1},
-		{"line range", "README.md#L3-L8", 1},
-		{"line column range", "README.md#L3C2-L8C5", 1},
+		{"relative line", "README.md:3", 0},
+		{"absolute line", readme + ":3", 0},
+		{"line and column", readme + ":3:5", 0},
+		{"file URL line", readmeURL.String() + ":3", 0},
+		{"line anchor", "README.md#L3", 0},
+		{"line range", "README.md#L3-L8", 0},
+		{"line column range", "README.md#L3C2-L8C5", 0},
 		{"download", "README.md", 1},
 		{"missing download", "report.pdf", 1},
 	} {
@@ -113,11 +113,11 @@ func TestSourceLocationLinksExportActualFileInline(t *testing.T) {
 			if len(item.Attachments) != tc.wantAttachments {
 				t.Fatalf("got %d attachments, want %d", len(item.Attachments), tc.wantAttachments)
 			}
+			if tc.wantAttachments == 0 {
+				return
+			}
 			if tc.name != "missing download" && item.Attachments[0].State != "ready" {
 				t.Fatal("ordinary file download lost")
-			}
-			if tc.name != "download" && tc.name != "missing download" && !item.Attachments[0].Inline {
-				t.Fatal("source link created a separate attachment card")
 			}
 			if tc.name == "missing download" && item.Attachments[0].State != "missing" {
 				t.Fatal("genuinely missing attachment must retain its state")
@@ -137,7 +137,7 @@ func TestFileLinkAliasesKeepDownloadableReferences(t *testing.T) {
 	raw, _ := json.Marshal(map[string]any{"id": "turn", "items": []any{map[string]any{"id": "a", "type": "agentMessage", "text": message}}})
 	turn := normalizeTurn(raw)
 	p.attachments(context.Background(), "aliases", cwd, &turn, raw)
-	if len(turn.Items[0].Attachments) != 3 {
+	if len(turn.Items[0].Attachments) != 2 {
 		t.Fatalf("file aliases lost their download mapping: %+v", turn.Items[0].Attachments)
 	}
 	for _, a := range turn.Items[0].Attachments {

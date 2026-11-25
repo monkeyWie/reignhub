@@ -35,7 +35,7 @@ func (s *State) refreshAfterSend(key, target, provider, session string, reconcil
 }
 
 // Local messages are an overlay, never synthetic Agent turns. Only a fresh
-// remote snapshot may prove an unresolved message absent after an RPC settles.
+// complete snapshot may clear a definitively failed submission without an echo.
 type outgoingMessage struct {
 	ID          string          `json:"id"`
 	Text        string          `json:"text"`
@@ -122,7 +122,7 @@ func (s *State) queueOutgoing(body string, uploads []*Upload) *outgoingMessage {
 		a := Object{"id": u.ID, "name": u.Name, "mime": u.MIME, "kind": kind, "size": len(u.Data), "sha256": u.SHA256, "state": "ready"}
 		m.Attachments = append(m.Attachments, a)
 		if kind == "image" {
-			s.cacheImage(s.key()+"|"+u.ID+"|false", u.Data)
+			s.cacheImage(s.imageKey(a, false), u.Data)
 		}
 	}
 	s.outgoing[s.key()] = append(s.outgoing[s.key()], m)
@@ -212,6 +212,7 @@ func (s *State) reconcileOutgoing(freshSince time.Time) {
 		return
 	}
 	rows := messages(s.transcript)
+	complete := !freshSince.IsZero() && str(s.transcript, "nextCursor") == "" && str(s.transcript, "partialTurn") == "" && !flag(s.transcript, "_localOlder")
 	used := map[string]bool{}
 	kept := []*outgoingMessage{}
 	for _, m := range s.outgoing[s.key()] {
@@ -240,10 +241,8 @@ func (s *State) reconcileOutgoing(freshSince time.Time) {
 			s.markOutgoingRemoved(m.ID)
 			continue
 		}
-		// Completed fresh history reconciles the local overlay for both accepted
-		// and failed submissions. Cache reads and progressive fragments cannot
-		// prove absence; neither can a snapshot begun before this RPC settled.
-		if !freshSince.IsZero() && str(s.transcript, "nextCursor") == "" && m.Status != "sending" && m.Status != "uncertain" && !m.FinishedAt.IsZero() && !m.FinishedAt.After(freshSince) {
+		// An accepted command can precede its history echo, even after a fresh read.
+		if complete && m.Status == "failed" && !m.FinishedAt.IsZero() && !m.FinishedAt.After(freshSince) {
 			s.replaceOutgoingAnchor(m.ID, m.Anchors)
 			s.markOutgoingRemoved(m.ID)
 			continue

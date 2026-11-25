@@ -26,7 +26,7 @@ func (p *Provider) RemoveSession(ctx context.Context, id string) error {
 		p.mu.Unlock()
 		return nil
 	}
-	if s.sending || s.opening {
+	if s.sending || s.opening || s.configuring {
 		p.mu.Unlock()
 		return errors.New("会话正在执行或恢复，请结束后再移除")
 	}

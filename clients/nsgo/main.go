@@ -8,7 +8,13 @@ import (
 )
 
 func main() {
+	if runSharedWorker() {
+		return
+	}
 	// App mode gives every desktop a managed window that can hide to the
 	// tray. Phones and browsers still use the same single main view.
-	nsgo.Run(func(app *core.Scope) { nsgo.SetMainView(app, hubui.Root) }, append([]nsgo.Option{nsgo.WindowSize(1320, 880)}, nativecap.Options()...)...)
+	nsgo.Run(func(app *core.Scope) {
+		nativecap.ConfigureTextEditing()
+		nsgo.SetMainView(app, hubui.Root)
+	}, append([]nsgo.Option{nsgo.WindowSize(1320, 880)}, nativecap.Options()...)...)
 }

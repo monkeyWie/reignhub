@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"net/http"
 	"sync/atomic"
 	"time"
 
@@ -23,7 +24,7 @@ func (p *Provider) ConnectDesktop(ctx context.Context, expected []provider.Insta
 		p.mu.Lock()
 		shared, bridge := p.shared, p.ipc
 		p.mu.Unlock()
-		if (shared == nil && (bridge == nil || !bridge.needsSharedDesktop())) || (shared != nil && shared.connected() && !restart) {
+		if (shared == nil && (bridge == nil || !bridge.needsSharedDesktop())) || (shared != nil && shared.connected(ctx) && !restart) {
 			return nil
 		}
 	}
@@ -51,34 +52,50 @@ func (p *Provider) ConnectDesktop(ctx context.Context, expected []provider.Insta
 	if app == "" {
 		return errors.New("请先安装 Codex App")
 	}
-	var publish func(*rpc.Client)
-	fresh := shared == nil || shared.ctx.Err() != nil
-	if fresh {
+	previousRecord, err := readSharedEndpoint(setup, p.cfg.DataDir)
+	if err != nil {
+		return err
+	}
+	observe, publish := p.runtimeObserver()
+	var client *rpc.Client
+	if shared != nil {
+		client, err = shared.dial(setup, observe)
+	}
+	if shared == nil || err != nil {
 		cli := system.FindCLI(p.cfg.CodexCLI, app)
 		if cli == "" {
 			return errors.New("未找到 Codex 可执行文件")
 		}
-		observe, setClient := p.runtimeObserver()
-		publish = setClient
-		backend, stop := context.WithTimeout(setup, 7*time.Second)
-		shared, err = startSharedServer(backend, cli, observe)
-		stop()
+		shared, err = startSharedWorker(setup, cli, p.cfg.DataDir)
 		if err != nil {
+			return err
+		}
+		client, err = shared.dial(setup, observe)
+		if err != nil {
+			return errors.New("共享 Codex 后端未完成初始化")
+		}
+		if err = saveSharedEndpoint(setup, p.cfg.DataDir, previousRecord, shared.sharedEndpoint); err != nil {
+			_ = client.Close()
 			return err
 		}
 	}
 	attached := false
-	desktop := &sharedDesktop{path: "/" + rand.Text()}
-	previous := shared.desktop.Swap(desktop)
 	defer func() {
 		if !attached {
-			shared.desktop.Store(previous)
-			if fresh {
-				shared.close()
-			}
+			_ = client.Close()
 		}
 	}()
-	if _, err := system.LaunchCodexDesktop(setup, app, shared.address+desktop.path, expected, restart); err != nil {
+	path := "/" + rand.Text()
+	_, err = shared.desktopState(setup, http.MethodPut, path)
+	if err != nil {
+		return errors.New("无法准备 Codex App 连接")
+	}
+	defer func() {
+		if !attached {
+			_, _ = shared.desktopState(context.Background(), http.MethodDelete, path)
+		}
+	}()
+	if _, err := system.LaunchCodexDesktop(setup, app, shared.Address+path, expected, restart); err != nil {
 		return err
 	}
 	tick := time.NewTicker(100 * time.Millisecond)
@@ -90,13 +107,11 @@ func (p *Provider) ConnectDesktop(ctx context.Context, expected []provider.Insta
 				return ctx.Err()
 			}
 			return errors.New("Codex App 未完成共享后端连接，请确认此版本支持 WebSocket 启动")
-		case <-shared.ctx.Done():
+		case <-client.Done():
 			return errors.New("共享 Codex 后端在 App 连接前已停止")
 		case <-tick.C:
-			if desktop.ready.Load() > 0 {
-				if fresh {
-					p.useShared(shared, shared.client, publish)
-				}
+			if state, err := shared.desktopState(setup, http.MethodGet, ""); err == nil && state.Path == path && state.Ready {
+				p.useShared(shared, client, publish)
 				attached = true
 				return nil
 			}
@@ -106,7 +121,7 @@ func (p *Provider) ConnectDesktop(ctx context.Context, expected []provider.Insta
 
 // An old executor can finish work it already accepted. It cannot publish
 // events into, or receive another write from, the new provider connection.
-func (p *Provider) useShared(shared *sharedServer, client *rpc.Client, publish func(*rpc.Client)) {
+func (p *Provider) useShared(shared *sharedConnection, client *rpc.Client, publish func(*rpc.Client)) {
 	p.mu.Lock()
 	bridge := p.ipc
 	p.mu.Unlock()
@@ -121,8 +136,12 @@ func (p *Provider) useShared(shared *sharedServer, client *rpc.Client, publish f
 	}
 	p.ipc, p.client, p.shared = nil, client, shared
 	p.created = map[string]*rpc.Client{}
+	p.composerSettings = nil
 	p.endpoint, p.lastError = "websocket", ""
 	p.mu.Unlock()
+	if bridge == nil && old != nil && old != client {
+		_ = old.Close()
+	}
 	p.clearRoute("service")
 	publish(client)
 	p.observeMu.Unlock()
@@ -184,10 +203,10 @@ func (p *Provider) threadWrite(ctx context.Context, c *rpc.Client, method string
 	return err
 }
 
-func (p *Provider) activeShared() bool {
+func (p *Provider) sharedBackend() *sharedConnection {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return p.shared != nil
+	return p.shared
 }
 
 // The shared server has its own per-connection subscription. Follow loaded
@@ -199,6 +218,9 @@ func (p *Provider) followShared(ctx context.Context, id string) error {
 	var result struct{ Thread thread }
 	if err := p.call(ctx, "thread/read", map[string]any{"threadId": id}, &result); err != nil {
 		return err
+	}
+	if result.Thread.ID != id {
+		return errors.New("无法在共享后端确认此 Codex 会话")
 	}
 	switch result.Thread.Status.Type {
 	case "active", "idle", "systemError":

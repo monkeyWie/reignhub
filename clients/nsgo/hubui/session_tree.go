@@ -410,7 +410,8 @@ func (s *State) updateSelectedSummary() {
 				if k == "title" && (strings.TrimSpace(str(row, "title")) != "" || strings.TrimSpace(str(summary, "title")) == "") {
 					continue
 				}
-				if k != "deviceId" {
+				// Cached history can arrive after current owner discovery.
+				if k != "deviceId" && k != "codexOwnerUnreachable" {
 					next[k] = v
 				}
 			}

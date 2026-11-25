@@ -126,6 +126,9 @@ func (p *Provider) attachments(ctx context.Context, session, cwd string, turn *p
 				source, inline = string(link.Destination), true
 			case *ast.Link:
 				source = string(link.Destination)
+				if _, location := filelink.Path(source); location {
+					return ast.WalkContinue, nil
+				}
 			default:
 				return ast.WalkContinue, nil
 			}
@@ -133,10 +136,6 @@ func (p *Provider) attachments(ctx context.Context, session, cwd string, turn *p
 			if path == "" {
 				return ast.WalkContinue, nil
 			}
-			// Source locations remain inline links, with a scoped download of
-			// the actual file available to remote controllers.
-			_, location := filelink.Path(source)
-			inline = inline || location
 			// Only export Markdown file references beneath this workspace or the
 			// Hub attachment directory, not arbitrary paths sent by a controller.
 			if !beneath(cwd, path) && !beneath(p.assets.Root, path) {

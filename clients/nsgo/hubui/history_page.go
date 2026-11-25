@@ -421,7 +421,7 @@ func (s *State) olderPage(owner context.Context, fill bool, current func() bool)
 		// delivery and queue rows, which already live in their own tables.
 		patch.Head = persistence.HistoryHead(latest.Transcript)
 		patch.Overlay = nil
-		patch.Head["nextCursor"] = page["nextCursor"]
+		patch.Head["nextCursor"], patch.Head["partialTurn"] = page["nextCursor"], page["partialTurn"]
 		if e = dao.ApplyHistory(ctx, route, patch); e != nil {
 			return nil, e
 		}
@@ -436,7 +436,7 @@ func (s *State) olderPage(owner context.Context, fill bool, current func() bool)
 		stored := v.(persistence.HistoryPage)
 		page := stored.Transcript
 		t := copyObject(s.transcript)
-		t["nextCursor"] = page["nextCursor"]
+		t["nextCursor"], t["partialTurn"] = page["nextCursor"], page["partialTurn"]
 		t["_localOlder"] = flag(t, "_localOlder") || len(objects(page["turns"])) > 0
 		s.transcript = t
 		if len(objects(page["turns"])) == 0 {

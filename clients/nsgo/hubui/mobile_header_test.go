@@ -15,7 +15,8 @@ func testMobileHeader(t *testing.T, dark bool) {
 	t.Helper()
 	text := strings.Repeat("这是一段较长的回复。滚动时，消息应当从顶部悬浮导航下面经过，逐渐淡出，而不是被挤到下面。\n\n", 25)
 	transcript := Object{"turns": []Object{{"id": "turn", "status": "completed", "items": []Object{{"id": "answer", "role": "assistant", "text": text}}}}}
-	app, s := conversationFixture(t, newDemoAPI(), 390, transcript, true)
+	app, s := conversationFixture(t, newDemoAPI(), 390, nil, true)
+	initialFade := globalBounds(app.Find("id:conversation-header-fade"))
 	app.Post(func() {
 		s.cx.Post(func() {
 			s.selected["title"] = "带有很长标题的多行会话不会把顶部按钮挤出屏幕"
@@ -24,6 +25,7 @@ func testMobileHeader(t *testing.T, dark bool) {
 				s.dark = true
 				s.cx.SetAppearance(core.AppearanceDark)
 			}
+			s.setTranscript(transcript)
 			s.changed()
 		})
 	})
@@ -40,7 +42,13 @@ func testMobileHeader(t *testing.T, dark bool) {
 			t.Fatalf("%s exceeds phone width: %v", id, b)
 		}
 	}
-	if app.Find("id:conversation-header-fade").Props.PointerEvents != core.PointerEventsNone {
+	fade := app.Find("id:conversation-header-fade")
+	fadeBounds := globalBounds(fade)
+	title := globalBounds(app.Find("id:conversation-title-pill"))
+	if initialFade != fadeBounds || fadeBounds.Size.Height == 0 || fadeBounds.Origin.Y+fadeBounds.Size.Height != title.Origin.Y+title.Size.Height {
+		t.Fatalf("loading history must keep the fade within the controls: initial=%v loaded=%v title=%v", initialFade, fadeBounds, title)
+	}
+	if fade.Props.PointerEvents != core.PointerEventsNone {
 		t.Fatal("fade intercepts message interactions")
 	}
 	if app.Find("id:conversation-header").Props.PointerEvents != core.PointerEventsBoxNone {

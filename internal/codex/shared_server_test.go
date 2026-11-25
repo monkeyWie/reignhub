@@ -2,17 +2,24 @@ package codex
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/monkeyWie/reignhub/internal/config"
+	"github.com/monkeyWie/reignhub/internal/events"
+	"github.com/monkeyWie/reignhub/internal/provider"
 	"github.com/monkeyWie/reignhub/internal/rpc"
+	"github.com/monkeyWie/reignhub/internal/system"
 )
 
 func TestSharedCodexServerWithBundledCLI(t *testing.T) {
@@ -78,6 +85,22 @@ func TestSharedCodexServerWithBundledCLI(t *testing.T) {
 	err = server.client.Call(ctx, "thread/read", map[string]any{"threadId": created.Thread.ID}, &read)
 	if err != nil || read.Thread.ID != created.Thread.ID {
 		t.Fatal("Hub and desktop were not connected to the same server", err)
+	}
+	// A second connection can address the live, empty durable thread even
+	// though Codex refuses to resume it until a first user message exists.
+	var fresh struct{ Thread thread }
+	if err := client.Call(ctx, "thread/start", map[string]any{"cwd": dir}, &fresh); err != nil {
+		t.Fatal(err)
+	}
+	p := New(config.Config{}, "", events.New())
+	p.client, p.shared = server.client, &sharedConnection{}
+	got, err := p.threadClient(ctx, fresh.Thread.ID)
+	if err != nil || got != server.client || p.isCreatedThread(fresh.Thread.ID) {
+		t.Fatalf("lost the empty shared thread or claimed a subscription: %v", err)
+	}
+	history, err := p.Transcript(ctx, fresh.Thread.ID, "")
+	if err != nil || history.Session.ID != fresh.Thread.ID || len(history.Turns) != 0 {
+		t.Fatalf("empty shared transcript: %v", err)
 	}
 	_ = client.Close()
 	waitDesktop(t, ctx, server, false)
@@ -147,5 +170,154 @@ func TestSharedCodexRejectsUncertainWriteRetry(t *testing.T) {
 	rpcErr := &rpc.Error{Code: -32602, Message: "invalid params"}
 	if sharedWriteError("turn/start", rpcErr) != rpcErr {
 		t.Fatal("server rejection changed")
+	}
+}
+
+func TestSharedRecoveryProbeRequiresDesktopAndMatchingSession(t *testing.T) {
+	ctx := context.Background()
+	var ready atomic.Bool
+	status := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(desktopState{Ready: ready.Load()})
+	}))
+	defer status.Close()
+	shared := &sharedConnection{sharedEndpoint: sharedEndpoint{Control: strings.TrimPrefix(status.URL, "https://")}, http: status.Client()}
+	p := &Provider{shared: shared}
+	backendFixture(t, p, func(m rpc.Message) (any, *rpc.Error) {
+		if m.Method != "thread/read" {
+			t.Errorf("unexpected operation in probe: %s", m.Method)
+		}
+		return json.RawMessage(`{"thread":{"id":"held","status":{"type":"notLoaded"}}}`), nil
+	})
+	if _, err := p.Probe(ctx, "held", "", 0); !errors.Is(err, provider.ErrUnavailable) {
+		t.Fatalf("detached desktop counted as recovered: %v", err)
+	}
+	ready.Store(true)
+	if _, err := p.Probe(ctx, "other", "", 0); err == nil {
+		t.Fatal("unrelated thread counted as recovered")
+	}
+	if _, err := p.Probe(ctx, "held", "", 0); err != nil {
+		t.Fatalf("connected desktop and readable session: %v", err)
+	}
+}
+
+func TestSharedDesktopSurvivesHubRestart(t *testing.T) {
+	cli := os.Getenv("REIGNHUB_TEST_SHARED_CODEX_CLI")
+	if cli == "" || !system.CodexSharedDesktop {
+		t.Skip("provide a compatible desktop CLI")
+	}
+	t.Setenv("CODEX_HOME", t.TempDir())
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("CODEX_API_KEY", "")
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	cfg := config.Config{DataDir: t.TempDir()}
+	link, err := startSharedWorker(ctx, cli, cfg.DataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The deliberately detached worker owns the fixture database until its idle exit.
+	t.Cleanup(func() {
+		shutdown, stop := context.WithTimeout(context.Background(), 75*time.Second)
+		defer stop()
+		for {
+			_, err := link.desktopState(shutdown, http.MethodGet, "")
+			if err != nil {
+				break
+			}
+			time.Sleep(250 * time.Millisecond)
+		}
+		if shutdown.Err() != nil {
+			t.Error("idle fixture worker did not exit")
+		}
+	})
+	if err = saveSharedEndpoint(ctx, cfg.DataDir, nil, link.sharedEndpoint); err != nil {
+		t.Fatal(err)
+	}
+	// The endpoint is reachable during startup and after the App has left.
+	// A saved, live bridge alone must leave the ordinary IPC path available.
+	if link.waitDesktop(ctx) {
+		t.Fatal("a bridge with no desktop was selected")
+	}
+	path := "/" + rand.Text()
+	if _, err = link.desktopState(ctx, http.MethodPut, path); err != nil {
+		t.Fatal("worker control failed")
+	}
+	app, err := rpc.Dial(ctx, link.Address+path, nil)
+	if err != nil {
+		t.Fatal("fixture desktop did not initialize")
+	}
+	defer app.Close()
+	first := New(cfg, "", events.New())
+	if err = first.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if first.shared == nil || !first.shared.connected(ctx) {
+		t.Fatal("original desktop not recognized")
+	}
+	if err = first.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var created struct{ Thread struct{ ID string } }
+	if err = app.Call(ctx, "thread/start", map[string]any{"cwd": cfg.DataDir, "ephemeral": true}, &created); err != nil || created.Thread.ID == "" {
+		t.Fatal("desktop lost the backend while Hub was closed", err)
+	}
+	// Restart Hub while the desktop itself is reconnecting to the same worker.
+	_ = app.Close()
+	for link.connected(ctx) {
+		if ctx.Err() != nil {
+			t.Fatal(ctx.Err())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	rejoined := make(chan *rpc.Client, 1)
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		c, _ := rpc.Dial(ctx, link.Address+path, nil)
+		rejoined <- c
+	}()
+	second := New(cfg, "", events.New())
+	defer second.Close()
+	if err = second.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	app = <-rejoined
+	if app == nil {
+		t.Fatal("fixture desktop failed to reconnect")
+	}
+	defer app.Close()
+	if second.shared == nil || !second.shared.connected(ctx) {
+		t.Fatal("fresh Hub did not restore the connected desktop")
+	}
+	var read struct{ Thread struct{ ID string } }
+	if err = second.client.Call(ctx, "thread/read", map[string]any{"threadId": created.Thread.ID}, &read); err != nil || read.Thread.ID != created.Thread.ID {
+		t.Fatal("fresh Hub did not reach the previous server", err)
+	}
+	// A failed explicit launch restores the live desktop generation.
+	replacement := "/" + rand.Text()
+	if _, err = link.desktopState(ctx, http.MethodPut, replacement); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = link.desktopState(ctx, http.MethodDelete, replacement); err != nil || !link.connected(ctx) {
+		t.Fatal("failed launch lost original desktop")
+	}
+	_ = app.Close()
+	for link.connected(ctx) {
+		select {
+		case <-ctx.Done():
+			t.Fatal("desktop disconnect was not observed", ctx.Err())
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	if link.waitDesktop(ctx) {
+		t.Fatal("a previously used bridge claimed the next startup")
+	}
+}
+
+func TestSharedWorkerReportsMissingBackend(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cli := filepath.Join(t.TempDir(), "missing-codex.exe")
+	if _, err := startSharedWorker(ctx, cli, t.TempDir()); !errors.Is(err, sharedStartupCLI) {
+		t.Fatalf("missing executable must report a backend launch failure: %v", err)
 	}
 }

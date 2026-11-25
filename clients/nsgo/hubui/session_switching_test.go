@@ -199,3 +199,59 @@ func TestCachedSessionVerificationKeepsListViewport(t *testing.T) {
 	}
 	app.WaitUntil(3*time.Second, func() bool { return s.reading != nil && s.messageRows[0].ID == "turn|0" })
 }
+
+func TestOpeningFoldedTurnKeepsFollowupsAndAnswers(t *testing.T) {
+	ctx := context.Background()
+	dao := timelineTestDAO(t)
+	key := persistence.Session{Env: "fixture-" + persistence.Revision(), Provider: "codex-app", ID: "dense"}
+	defer dao.ForgetHistory(ctx, key.Env)
+	var turns []Object
+	for i, count := range []int{2, 103, 19} {
+		items := make([]Object, count)
+		for j := range items {
+			item := Object{"id": fmt.Sprint(j), "role": "tool", "type": "commandExecution"}
+			switch {
+			case j == count-1:
+				item["role"], item["text"] = "assistant", fmt.Sprintf("Answer %d", i)
+			case j == 0 || i == 1 && (j == 8 || j == 80):
+				item["role"], item["text"] = "user", fmt.Sprintf("Prompt %d/%d", i, j)
+			}
+			items[j] = item
+		}
+		turns = append(turns, Object{"id": fmt.Sprint(i), "status": "completed", "items": items})
+	}
+	full := Object{"turns": turns}
+	if err := dao.ApplyHistory(ctx, key, persistence.Diff("", nil, full)); err != nil {
+		t.Fatal(err)
+	}
+	page, err := dao.ReadPage(ctx, key, openingPageQuery())
+	if err != nil || page.Before == nil || page.Start != (persistence.PageCursor{Turn: 1, Item: 0}) {
+		t.Fatalf("opening boundary %v, continuation %v, err %v", page.Start, page.Before, err)
+	}
+	api := &independentStreamAPI{demoAPI: newDemoAPI(), snapshots: make(chan snapshotRequest, 1), events: make(chan Object), approvalsStarted: make(chan struct{})}
+	app, s := conversationFixture(t, api, 720, nil, true)
+	app.Post(func() { s.startSessionWatch() })
+	app.WaitUntil(time.Second, func() bool { return len(api.snapshots) == 1 })
+	req := <-api.snapshots
+	app.Post(func() {
+		// Slow disk delivers the opening page after verification has begun.
+		s.snapshots = newSnapshotWriter(s.ctx, &scrollingHistoryAPI{newDemoAPI(), dao})
+		s.applyCachedTranscript(page.View())
+		s.stream.applySnapshotPreview(s.stream.epoch, outgoingTranscript(Object{"id": "fragment", "role": "assistant", "text": "fragment"}), false, false)
+	})
+	app.WaitFor("text:Answer 2", time.Second)
+	check := func() {
+		t.Helper()
+		ids := make([]string, len(s.messageRows))
+		for i, row := range s.messageRows {
+			ids[i] = row.ID
+		}
+		if got := strings.Join(ids, " "); got != "1|0 1|work|1|tools|1 1|8 1|80 1|102 2|0 2|work|2|tools|1 2|18" {
+			t.Fatalf("displayed rows %s", got)
+		}
+	}
+	check()
+	req.reply <- full
+	app.WaitUntil(time.Second, func() bool { app.Settle(); return s.stream.verified })
+	check()
+}

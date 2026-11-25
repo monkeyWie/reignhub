@@ -37,6 +37,7 @@ var ipcVersions = map[string]int{
 type followedThread struct {
 	directory                              bool
 	owner                                  string
+	lastOwnerContact                       time.Time
 	version                                int
 	revision                               int64
 	state                                  json.RawMessage // Immutable once published. Readers may retain a revision.
@@ -82,19 +83,19 @@ type ownedThread struct {
 	sends         map[string]*ownedSend
 }
 type appIPC struct {
-	p                *Provider
-	home             string
-	queueFiles       []string
-	mu               sync.Mutex
-	conn             *codexipc.Client
-	connectErr       error
-	ownerUnavailable bool
-	followed         map[string]*followedThread
-	owned            map[string]*ownedThread
-	ctx              context.Context
-	cancel           context.CancelFunc
-	done             chan struct{}
-	dirty            chan string
+	p                 *Provider
+	home              string
+	queueFiles        []string
+	mu                sync.Mutex
+	conn              *codexipc.Client
+	connectErr        error
+	unreachableOwners map[string]time.Time
+	followed          map[string]*followedThread
+	owned             map[string]*ownedThread
+	ctx               context.Context
+	cancel            context.CancelFunc
+	done              chan struct{}
+	dirty             chan string
 }
 
 func newAppIPC(p *Provider) *appIPC {
@@ -106,7 +107,7 @@ func (b *appIPC) connectionError() error   { b.mu.Lock(); defer b.mu.Unlock(); r
 func (b *appIPC) needsSharedDesktop() bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return b.ownerUnavailable
+	return len(b.unreachableOwners) > 0
 }
 
 func (b *appIPC) connect(ctx context.Context) error {
@@ -291,6 +292,7 @@ func (b *appIPC) followFor(ctx context.Context, id string, directory bool) (stri
 		b.signal(f)
 	}
 	owner := f.owner
+	f.lastOwnerContact = time.Now()
 	b.mu.Unlock()
 	err = b.broadcast(attempt, "thread-stream-following-changed", map[string]any{"hostId": "local", "conversationId": id, "following": true}, []string{owner})
 	return owner, err
@@ -476,6 +478,8 @@ func (b *appIPC) Broadcast(m codexipc.Message) {
 		return
 	}
 	f.state = next
+	f.lastOwnerContact = time.Now()
+	delete(b.unreachableOwners, id)
 	f.revision = change.Revision
 	f.version = m.Version
 	f.err = nil
@@ -513,6 +517,7 @@ func (p *Provider) writeRoute(ctx context.Context, id string) (*rpc.Client, stri
 	if !safeThreadID(id) {
 		return nil, "", errors.New("无效 Codex 会话 ID")
 	}
+	started, conn := time.Now(), b.client()
 	owner, err := b.follow(ctx, id)
 	var discovery *ownerDiscoveryError
 	if err != nil && !errors.As(err, &discovery) {
@@ -529,9 +534,7 @@ func (p *Provider) writeRoute(ctx context.Context, id string) (*rpc.Client, stri
 		return nil, "", fmt.Errorf("无法确认会话写锁: %w", err)
 	}
 	if locked {
-		b.mu.Lock()
-		b.ownerUnavailable = true
-		b.mu.Unlock()
+		b.markOwnerUnreachable(id, started, conn)
 		if discovery != nil {
 			return nil, "", discovery
 		}
@@ -539,6 +542,7 @@ func (p *Provider) writeRoute(ctx context.Context, id string) (*rpc.Client, stri
 	}
 	// Resume must acquire the official server's writer lock. If another
 	// client acquired it after the probe, the resume fails before submission.
+	b.clearOwnerUnreachable(id)
 	c, err := p.threadClient(ctx, id)
 	return c, "", err
 }
@@ -562,6 +566,13 @@ func safeThreadID(id string) bool {
 	}
 	return true
 }
+
+// Desktop uses clientId on the server's userMessage to distinguish a remote
+// steer from the opening input, even when both have the same text.
+func serverInputParams(id string, input []any) map[string]any {
+	return map[string]any{"threadId": id, "input": input, "clientUserMessageId": uuid.NewString()}
+}
+
 func (p *Provider) sendInput(ctx context.Context, id string, input []any, model string) error {
 	input = ipcInput(input)
 	c, owner, err := p.writeRoute(ctx, id)
@@ -583,11 +594,16 @@ func (p *Provider) sendInput(ctx context.Context, id string, input []any, model 
 		_, err = b.request(ctx, "thread-follower-start-turn", map[string]any{"conversationId": id, "turnStart": map[string]any{"request": request, "context": map[string]any{"useAppServerPermissionDefault": true}}}, owner)
 		return ipcWriteError("thread-follower-start-turn", err)
 	}
-	params := map[string]any{"threadId": id, "input": input}
+	params := serverInputParams(id, input)
 	if model != "" {
 		params["model"] = model
 	}
-	return p.threadWrite(ctx, c, "turn/start", params, nil)
+	err = p.threadWrite(ctx, c, "turn/start", params, nil)
+	if err == nil && p.sharedBackend() != nil && !p.isCreatedThread(id) {
+		// Wake the watch so it can subscribe once the first turn materializes.
+		p.stream().log.Publish(provider.StreamEvent{Kind: "snapshot", SessionID: id})
+	}
+	return err
 }
 func (p *Provider) steerInput(ctx context.Context, id, turn string, input []any) error {
 	input = ipcInput(input)
@@ -620,7 +636,9 @@ func (p *Provider) steerInput(ctx context.Context, id, turn string, input []any)
 		_, err = b.request(ctx, "thread-follower-steer-turn", ipcSteerParams(state, id, input), owner)
 		return ipcWriteError("thread-follower-steer-turn", err)
 	}
-	return p.threadWrite(ctx, c, "turn/steer", map[string]any{"threadId": id, "expectedTurnId": turn, "input": input}, nil)
+	params := serverInputParams(id, input)
+	params["expectedTurnId"] = turn
+	return p.threadWrite(ctx, c, "turn/steer", params, nil)
 }
 
 func ipcWriteError(method string, err error) error {
@@ -672,14 +690,15 @@ func ipcRestoreMessage(state map[string]any, input []any, id string) map[string]
 
 func ipcTurnStart(state map[string]any, id string, input []any, model string) map[string]any {
 	request := map[string]any{"threadId": id, "turnTrigger": "composer", "clientUserMessageId": uuid.NewString(), "input": input, "cwd": state["cwd"], "model": nil, "effort": nil, "collaborationMode": state["latestCollaborationMode"], "useAppServerPermissionDefault": true}
-	// Preserve owner policy. Never supply a second profile-based permissions field.
-	for _, source := range []string{"currentPermissions", "latestThreadSettings"} {
-		if settings, ok := state[source].(map[string]any); ok {
-			for _, key := range []string{"approvalPolicy", "approvalsReviewer", "sandboxPolicy"} {
-				if v, ok := settings[key]; ok {
-					request[key] = v
-				}
-			}
+	// As in the composer, prefer the owner's current policy as one snapshot.
+	// Mixing individual fields with older settings can change which actions need approval.
+	settings := object(state["currentPermissions"])
+	if settings["sandboxPolicy"] == nil && settings["activePermissionProfile"] == nil {
+		settings = object(state["latestThreadSettings"])
+	}
+	for _, key := range []string{"approvalPolicy", "approvalsReviewer", "sandboxPolicy"} {
+		if v := settings[key]; v != nil {
+			request[key] = v
 		}
 	}
 	if model != "" {

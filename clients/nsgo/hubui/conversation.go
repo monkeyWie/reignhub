@@ -1,7 +1,6 @@
 package hubui
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -10,6 +9,7 @@ import (
 	"github.com/monkeyWie/reignhub/pkg/messagecontent"
 	"github.com/nsgo-dev/nsgo/base/textview"
 	"github.com/nsgo-dev/nsgo/core"
+	"github.com/nsgo-dev/nsgo/desktop"
 	"github.com/nsgo-dev/nsgo/icons/lucide"
 	"github.com/nsgo-dev/nsgo/ui"
 	"github.com/nsgo-dev/nsgo/ui/chat"
@@ -19,6 +19,7 @@ func (s *State) conversation(cx *core.Scope, narrow bool) core.Node {
 	if s.selected == nil {
 		return s.home(cx)
 	}
+	bindBrowserMessageSelectAll(cx)
 	children := []core.Node{}
 	floatingHeader := s.width.GetUntracked() < compactBreakpoint
 	anchor := &messageScrollAnchor{following: true, atBottom: core.NewSignal(cx, true)}
@@ -52,18 +53,17 @@ func (s *State) conversation(cx *core.Scope, narrow bool) core.Node {
 			})
 		})
 	}
-	var lastOffset core.Points
 	var cancelBoundsCheck func()
 	updateScroll := func(e core.ScrollEvent) {
-		size, content := anchor.size, anchor.content
-		anchor.scroll(e)
+		size := anchor.size
+		direction := anchor.scroll(e)
 		if cancelBoundsCheck != nil {
 			cancelBoundsCheck()
 			cancelBoundsCheck = nil
 		}
 		// A delayed page can shrink the list after the last gesture event.
 		// Let the platform apply its own correction before reconciling it.
-		if outsideScrollRange(e) && !anchor.dragging && !anchor.momentum {
+		if anchor.needsBoundsCorrection(e) {
 			cancelBoundsCheck = cx.RequestAnimationFrame(func(time.Time) {
 				cancelBoundsCheck = nil
 				anchor.settle(e)
@@ -73,10 +73,9 @@ func (s *State) conversation(cx *core.Scope, narrow bool) core.Node {
 			if s.reading != nil {
 				anchor.following, anchor.restoring = false, false
 			}
-			if anchor.pendingRow == nil && (anchor.dragging || content == e.ContentSize) && e.Offset.Y != lastOffset {
-				scrollHistory(choose(e.Offset.Y > lastOffset, 1, -1))
+			if direction != 0 {
+				scrollHistory(direction)
 			}
-			lastOffset = e.Offset.Y
 		}
 		if size != anchor.size {
 			settleResize()
@@ -86,8 +85,13 @@ func (s *State) conversation(cx *core.Scope, narrow bool) core.Node {
 	// Connection/approval polling must not rebuild the entire list's data and
 	// navigation index. Message projections are replaced, never edited in place.
 	var previousRows []Message
+	previousEdge := s.historyEdge()
 	rows := core.NewMemoFunc(cx, func() []Message {
 		s.read()
+		if edge := s.historyEdge(); edge != previousEdge {
+			anchor.boundsCorrected = false
+			previousEdge = edge
+		}
 		anchor.preserveReading(cx, previousRows, s)
 		previousRows = s.messageRows
 		return s.messageRows
@@ -143,6 +147,8 @@ func (s *State) conversation(cx *core.Scope, narrow bool) core.Node {
 		// Those measurements must not restore the previous bottom anchor.
 		anchor.following, anchor.restoring = false, false
 		anchor.pendingRow = nil
+		anchor.boundsCorrected = false
+		anchor.rebasing = true
 		anchor.atBottom.Set(false)
 		listRef.ScrollToIndexAt(index, .5, 0, false)
 	}
@@ -167,6 +173,8 @@ func (s *State) conversation(cx *core.Scope, narrow bool) core.Node {
 		},
 		OnScrollDragStart: func(e core.ScrollEvent) {
 			anchor.pendingRow = nil
+			anchor.boundsCorrected = false
+			anchor.rebasing = false
 			anchor.dragging, anchor.restoring = true, false
 			updateScroll(e)
 		}, OnScrollDragEnd: func(e core.ScrollEvent) {
@@ -244,11 +252,10 @@ func (s *State) compactConversationHeader(cx *core.Scope, menu bool) core.Node {
 			return cwd
 		}, 11, true),
 	}}, pill(s.conversationConnectionIndicator(cx), s.terminalButton(cx), labelledIconButton(cx, "attachment-cache", "管理附件缓存", lucide.HardDrive, func() { s.dialog.Set("clear-cache") })))
-	return core.View{TestID: "conversation-header", PointerEvents: core.PointerEventsBoxNone, Style: core.Style{Position: core.Absolute, Top: core.Pt(0), Left: core.Pt(0), Right: core.Pt(0), Height: core.Pt(100), ZIndex: 5}, Children: []core.Node{
+	return core.View{TestID: "conversation-header", PointerEvents: core.PointerEventsBoxNone, Style: core.Style{Position: core.Absolute, Top: core.Pt(0), Left: core.Pt(0), Right: core.Pt(0), ZIndex: 5}, Children: []core.Node{
 		core.View{TestID: "conversation-header-fade", PointerEvents: core.PointerEventsNone, Style: core.Style{Position: core.Absolute, Top: core.Pt(0), Bottom: core.Pt(0), Left: core.Pt(0), Right: core.Pt(0)}, StyleFunc: func() core.Style {
 			bg := palette(cx).background
-			mask := core.LinearGradient(180, core.RGB(0xffffff), core.RGB(0xffffff), core.RGB(0xffffff).Faded(0))
-			return core.Style{Gradients: []core.Gradient{core.LinearGradient(180, bg.Faded(.9), bg.Faded(.6), bg.Faded(0))}, BackdropFilters: []core.Filter{core.Blur(10)}, Mask: &mask}
+			return core.Style{Gradients: []core.Gradient{core.LinearGradient(180, bg.Faded(.9), bg.Faded(.6), bg.Faded(0))}}
 		}},
 		core.View{PointerEvents: core.PointerEventsBoxNone, Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 8, Padding: core.Edges{Top: 8, Left: 12, Right: 12}, MinWidth: core.Pt(0)}, Children: buttons},
 	}}
@@ -301,7 +308,14 @@ func (s *State) message(cx *core.Scope, get func() Message) core.Node {
 		s.read()
 		return !user && s.animateText[get().ID] && !s.transcriptSyncing && s.connected()
 	})
-	body := ui.TextView{MarkdownFunc: bodyText, Options: textview.Options{Streaming: m.Live}, RenderImage: func(cx *core.Scope, im textview.Image) core.Node {
+	document := func(source string) textview.Document {
+		cwd := str(s.selected, "cwd")
+		if cwd == "" {
+			cwd = str(object(s.transcript["session"]), "cwd")
+		}
+		return messageDocument(source, cwd, m.Live)
+	}
+	body := ui.TextView{DocumentFunc: func() textview.Document { return document(bodyText()) }, CustomSpan: sourceReferenceSpan, RenderImage: func(cx *core.Scope, im textview.Image) core.Node {
 		for _, a := range get().Attachments {
 			if str(a, "source") == im.Src {
 				return s.imageTile(cx, get, func() Object { return a })
@@ -347,7 +361,9 @@ func (s *State) message(cx *core.Scope, get func() Message) core.Node {
 				} else if strings.TrimSpace(part.Text) != "" {
 					text := part.Text
 					view := body
-					view.MarkdownFunc = func() string { return strings.TrimRight(text, " \t\r\n") }
+					view.DocumentFunc = func() textview.Document {
+						return document(messagecontent.UserMarkdown(strings.TrimRight(text, " \t\r\n")))
+					}
 					children = append(children, view)
 				}
 			}
@@ -360,6 +376,9 @@ func (s *State) message(cx *core.Scope, get func() Message) core.Node {
 		}
 		return core.Style{}
 	}, Children: []core.Node{bodyContent}}
+	if customWindow(cx) {
+		messageSelectionCopy(cx, &bubble)
+	}
 	var bubbleContent core.Node = bubble
 	if user {
 		bubbleContent = core.View{Style: core.Style{Direction: core.Row, Width: core.Pct(100), MinWidth: core.Pt(0), JustifyContent: core.JustifyEnd}, Children: []core.Node{bubble}}
@@ -386,25 +405,31 @@ func (s *State) message(cx *core.Scope, get func() Message) core.Node {
 		}}}}
 	}}
 	actions := core.Show{When: func() bool { return !get().Live && get().Delivery != "sending" }, Then: func(cx *core.Scope) core.Node {
-		// Align the visible action icon with the article, while its full hit
-		// target extends into the existing message gutter.
-		inset := choose(user, core.Points(0), -buttonHorizontalPadding)
-		return core.View{TestID: "message-actions-" + m.ID, Style: core.Style{Height: core.Pt(32), Direction: core.Row, AlignItems: core.AlignCenter, Gap: 8, Margin: core.Edges{Left: inset}}, StyleFunc: func() core.Style {
-			visible := hover.Get() || s.narrowLayout() || get().Delivery == "failed"
-			return core.Style{Opacity: core.Alpha(choose(visible, float32(1), float32(0))), PointerEvents: choose(visible, core.PointerEventsAuto, core.PointerEventsNone)}
-		}, Children: []core.Node{core.Show{When: func() bool { return user && get().Delivery == "failed" }, Then: func(cx *core.Scope) core.Node {
-			retry := button(cx, "retry-message-"+m.ID, "", lucide.RotateCcw, "ghost", func() { s.retryOutgoing(m.ID) }).(core.View)
-			retry.Label = "重试发送"
-			retry.Tooltip = tooltipCard(cx, label(cx, "重试发送", 12, false))
-			retry.Disabled = func() bool { return !s.canSubmitMessage() }
-			return retry
-		}}, s.copyButton(cx, "copy-message-"+m.ID, "", "ghost", func() string { return messageCopyText(get()) }), dynamicText(cx, func() string {
+		copyAction := s.copyButton(cx, "copy-message-"+m.ID, "", "ghost", func() string { return messageCopyText(get()) })
+		stamp := dynamicText(cx, func() string {
 			ts := get().Timestamp
 			if ts == 0 {
 				return "时间未知"
 			}
 			return s.localTime(time.UnixMilli(ts)).Format("15:04")
-		}, 11, true)}}
+		}, 11, true)
+		children := []core.Node{copyAction, stamp}
+		margin := core.Edges{Left: -buttonHorizontalPadding}
+		if user {
+			retryAction := core.Show{When: func() bool { return get().Delivery == "failed" }, Then: func(cx *core.Scope) core.Node {
+				retry := button(cx, "retry-message-"+m.ID, "", lucide.RotateCcw, "ghost", func() { s.retryOutgoing(m.ID) }).(core.View)
+				retry.Label = "重试发送"
+				retry.Tooltip = tooltipCard(cx, label(cx, "重试发送", 12, false))
+				retry.Disabled = func() bool { return !s.canSubmitMessage() }
+				return retry
+			}}
+			children = []core.Node{stamp, retryAction, copyAction}
+			margin = core.Edges{Right: -buttonHorizontalPadding}
+		}
+		return core.View{TestID: "message-actions-" + m.ID, Style: core.Style{Height: core.Pt(32), Direction: core.Row, AlignItems: core.AlignCenter, Gap: 8, Margin: margin}, StyleFunc: func() core.Style {
+			visible := hover.Get() || s.narrowLayout() || get().Delivery == "failed"
+			return core.Style{Opacity: core.Alpha(choose(visible, float32(1), float32(0))), PointerEvents: choose(visible, core.PointerEventsAuto, core.PointerEventsNone)}
+		}, Children: children}
 	}}
 	if user {
 		content = append(content, core.View{Style: core.Style{Direction: core.Row, Height: core.Pt(32), AlignItems: core.AlignCenter, Gap: 8}, Children: []core.Node{delivery, actions}})
@@ -413,6 +438,39 @@ func (s *State) message(cx *core.Scope, get func() Message) core.Node {
 	}
 	return core.View{TestID: "message-" + m.ID, OnMouseEnter: func(core.MouseEvent) { hover.Set(true) }, OnMouseLeave: func(core.MouseEvent) { hover.Set(false) }, Style: core.Style{AlignItems: choose(user, core.AlignEnd, core.AlignStretch), Padding: core.Edges{Top: 10, Bottom: 10}, Width: core.Pct(100), MinWidth: core.Pt(0)}, Children: content}
 }
+
+// Bind copy only for the lifetime of this bubble's native text selection.
+func messageSelectionCopy(cx *core.Scope, bubble *core.View) {
+	var selected string
+	hasSelection := core.NewSignal(cx, false)
+	bubble.OnTextSelection = func(selection core.TextSelection) {
+		selected = selection.Text
+		hasSelection.Set(selected != "")
+	}
+	cx.Effect(func() {
+		if hasSelection.Get() {
+			cx.OnKey("mod+c", func() { cx.SetClipboard(selected) })
+		}
+	})
+	// An application handler takes precedence over the platform's selection menu.
+	if !needsMessageSelectionMenu {
+		return
+	}
+	bubble.OnContextMenu = func(event core.ContextMenuEvent) {
+		text := selected
+		if text == "" {
+			return
+		}
+		msgs := locales.For(cx)
+		desktop.PopupMenu(cx, []desktop.MenuItem{
+			// Keep the range the user clicked even if opening the menu changes focus.
+			{Label: msgs.Copy(), OnSelect: func() { cx.SetClipboard(text) }},
+			// The platform extends its selection across this selectable bubble.
+			{Label: msgs.SelectAll(), Role: desktop.MenuSelectAll},
+		}, event.PagePosition, nil)
+	}
+}
+
 func (s *State) activity(cx *core.Scope, get func() Message) core.Node {
 	open := core.NewSignal(cx, false)
 	hover := core.NewSignal(cx, false)
@@ -462,6 +520,7 @@ func (s *State) activity(cx *core.Scope, get func() Message) core.Node {
 	}}}}
 }
 func (s *State) composer(cx *core.Scope) core.Node {
+	s.watchComposerControls(cx)
 	input := &core.Ref{}
 	s.composerRef = input
 	cx.Cleanup(func() {
@@ -470,6 +529,7 @@ func (s *State) composer(cx *core.Scope) core.Node {
 		}
 	})
 	key, generation := s.key(), s.sessionGeneration
+	entryID := fmt.Sprintf("composer-entry-%d", generation)
 	focusRequested := false
 	cx.Effect(func() {
 		s.read()
@@ -480,25 +540,22 @@ func (s *State) composer(cx *core.Scope) core.Node {
 		// Focus after the restored draft and enabled editor reach the platform.
 		// This scope belongs to the entry, so navigation cancels a pending focus.
 		cx.Post(func() {
-			if s.key() == key && s.sessionGeneration == generation && s.draftReady() &&
-				s.dialog.GetUntracked() == "" && s.hostAuthorization.GetUntracked() == "" && !s.terminalVisible() {
-				input.Focus()
-			}
+			input.Measure(func(_, _ core.Bounds, mounted bool) {
+				if mounted && s.key() == key && s.sessionGeneration == generation && s.draftReady() &&
+					s.dialog.GetUntracked() == "" && s.hostAuthorization.GetUntracked() == "" && !s.terminalVisible() && s.conversationVisible() && !input.HoldsFocus() {
+					focusComposerOnEntry(cx, input, entryID)
+				}
+			})
 		})
 	})
 	inputHeight := core.NewSignal(cx, core.Points(56))
-	modelCatalog := core.NewMemo(cx, func() string {
-		s.read()
-		b, _ := json.Marshal(s.models)
-		return string(b) + "|" + s.model + "|" + fmt.Sprint(activeTurn(s.transcript) != nil)
-	})
 	running := func() bool { s.read(); return s.connected() && activeTurn(s.transcript) != nil }
 	disabled := func() bool { s.read(); return !s.connected() || !s.draftReady() }
 	submit := core.SubmitBehaviorSubmit
 	if isMobile(cx) {
 		submit = core.SubmitBehaviorNewline
 	}
-	return core.View{Style: core.Style{AlignItems: core.AlignCenter, Padding: core.Edges{Top: 6, Left: 18, Right: 18, Bottom: 18}, PaddingEnv: core.EnvEdges{Bottom: core.EnvKeyboard}}, Children: []core.Node{core.Show{When: s.errorAtComposer, Then: func(cx *core.Scope) core.Node { return s.errorOverlay(cx, true) }}, s.messageQueueView(cx), core.Show{When: func() bool { s.read(); return s.draftSaveFailed }, Then: func(cx *core.Scope) core.Node {
+	return core.View{TestID: entryID, Style: core.Style{AlignItems: core.AlignCenter, Padding: core.Edges{Top: 6, Left: 18, Right: 18, Bottom: 18}, PaddingEnv: core.EnvEdges{Bottom: core.EnvKeyboard}}, Children: []core.Node{core.Show{When: s.errorAtComposer, Then: func(cx *core.Scope) core.Node { return s.errorOverlay(cx, true) }}, s.messageQueueView(cx), core.Show{When: func() bool { s.read(); return s.draftSaveFailed }, Then: func(cx *core.Scope) core.Node {
 		return button(cx, "retry-save-draft", "重试保存草稿", lucide.RotateCcw, "ghost", func() { s.draftSaveFailed = false; s.draftWriter.retry(); s.changed() })
 	}}, core.Show{When: func() bool { s.read(); return s.draftLoads[s.key()] == "failed" }, Then: func(cx *core.Scope) core.Node {
 		return button(cx, "retry-draft", "重试恢复草稿", lucide.RotateCcw, "ghost", func() { s.loadDraft(); s.changed() })
@@ -511,7 +568,7 @@ func (s *State) composer(cx *core.Scope) core.Node {
 		return core.Style{Background: c.elevated, BorderColor: c.border, Color: c.foreground, Shadows: []core.BoxShadow{{Offset: core.Point{Y: 5}, Blur: 20, Color: core.RGB(0x000000).Faded(choose(cx.Dark(), float32(.18), float32(.07)))}}}
 	}, Children: []core.Node{
 		core.Show{When: func() bool { s.read(); return len(s.uploads) > 0 }, Then: func(cx *core.Scope) core.Node { return s.uploadPreviews(cx) }},
-		core.Input{Ref: input, TestID: "chat-input", Label: "消息", Disabled: func() bool { s.read(); return !s.draftReady() }, Placeholder: "发送消息…", Value: s.draft.Get, OnChange: s.changeDraft, Multiline: true, SubmitBehavior: submit,
+		editorInput{Ref: input, TestID: "chat-input", Label: "消息", Disabled: func() bool { s.read(); return !s.draftReady() }, Placeholder: "发送消息…", Value: s.draft.Get, OnChange: s.changeDraft, Multiline: true, SubmitBehavior: submit,
 			OnKeyPress: func(key string) {
 				if key != "Enter" {
 					s.beginDraftEdit()
@@ -530,48 +587,13 @@ func (s *State) composer(cx *core.Scope) core.Node {
 			}, OnContentSizeChange: func(size core.Size) { inputHeight.Set(min(168, max(56, size.Height+12))) }, Style: core.Style{FontSize: 14, LineHeight: 23, Padding: core.Symmetric(10, 4)}, StyleFunc: func() core.Style {
 				return textInputStyle(cx).Merge(core.Style{Height: core.Pt(inputHeight.Get())})
 			}},
+		core.Show{When: func() bool { return s.width.Get() < compactBreakpoint }, Then: s.composerSettingsRow},
 		core.View{Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 10}, Children: []core.Node{core.Show{When: func() bool { return s.agentCapability("imageInput") || s.agentCapability("fileInput") }, Then: func(cx *core.Scope) core.Node {
 			v := labelledIconButton(cx, "attach-files", "添加附件", lucide.Plus, func() { s.chooseFiles(cx) }).(core.View)
 			v.Disabled = disabled
 			return v
-		}}, spacer(), core.Dynamic(func(cx *core.Scope) core.Node {
-			_ = modelCatalog.Get()
-			options := []chat.Option{}
-			found := false
-			for _, m := range s.models {
-				options = append(options, chat.Option{ID: str(m, "id"), Label: str(m, "name")})
-				found = found || str(m, "id") == s.model
-			}
-			if s.model != "" && !found {
-				options = append([]chat.Option{{ID: s.model, Label: s.model}}, options...)
-			}
-			if core.Untracked(cx, running) {
-				name := s.model
-				for _, m := range s.models {
-					if str(m, "id") == s.model {
-						name = str(m, "name")
-						break
-					}
-				}
-				if name == "" {
-					name = "Agent 默认模型"
-				}
-				return label(cx, name, 12, true)
-			}
-			return core.View{Style: core.Style{MaxWidth: core.Pt(220), FlexShrink: 1, MinWidth: core.Pt(0)}, Children: []core.Node{chat.Picker{TestID: "model-selector", Label: func() string {
-				s.read()
-				for _, m := range s.models {
-					if str(m, "id") == s.model {
-						return str(m, "name")
-					}
-				}
-				if s.model != "" {
-					return s.model
-				}
-				return "Agent 默认模型"
-			}, Options: options, Selected: func() string { s.read(); return s.model }, OnChange: func(id string) { s.model = id; s.persistDraft(); s.changed() }, Width: 300, SearchLabel: "搜索模型"}}}
-		}), core.Show{When: func() bool { return running() && s.agentCapability("interrupt") }, Then: func(cx *core.Scope) core.Node {
-			return core.View{TestID: "interrupt-generation", Role: core.RoleButton, Label: "停止生成", Tooltip: tooltipCard(cx, label(cx, "停止生成", 12, false)), Busy: func() bool { return s.pendingSend() == "interrupt" }, Disabled: func() bool { return !s.connected() || s.pendingSend() != "" }, OnPress: func(core.PressEvent) { s.send("interrupt") }, Style: core.Style{Width: core.Pt(36), Height: core.Pt(36), CornerRadius: 18, FlexShrink: 0, AlignItems: core.AlignCenter, JustifyContent: core.JustifyCenter}, StyleFunc: func() core.Style {
+		}}, core.Show{When: func() bool { return s.width.Get() >= compactBreakpoint }, Then: s.composerSettingsRow}, spacer(), s.composerModelPicker(cx, running), core.Show{When: func() bool { return running() && s.agentCapability("interrupt") }, Then: func(cx *core.Scope) core.Node {
+			return core.View{TestID: "interrupt-generation", Role: core.RoleButton, Label: "停止生成", Tooltip: tooltipCard(cx, label(cx, "停止生成", 12, false)), Busy: func() bool { return s.pendingSend() == "interrupt" }, Disabled: func() bool { return !s.canWriteSession() || s.pendingSend() != "" }, OnPress: func(core.PressEvent) { s.send("interrupt") }, Style: core.Style{Width: core.Pt(36), Height: core.Pt(36), CornerRadius: 18, FlexShrink: 0, AlignItems: core.AlignCenter, JustifyContent: core.JustifyCenter}, StyleFunc: func() core.Style {
 				return filledButtonStyle(cx)
 			}, Children: []core.Node{core.Show{When: func() bool { return s.pendingSend() == "interrupt" }, Then: func(cx *core.Scope) core.Node {
 				theme := *cx.Theme()
@@ -620,14 +642,14 @@ func (s *State) approvalCard(cx *core.Scope, a Object) core.Node {
 	}
 	if flag(params, "input") {
 		value := core.NewSignal(cx, str(params, "value"))
-		buttons = append(buttons, core.Input{TestID: "approval-input-" + str(a, "id"), Label: "Agent 请求的内容", Value: value.Get, OnChange: value.Set, Multiline: true, Style: core.Style{MinHeight: core.Pt(72), MaxHeight: core.Pt(180)}, StyleFunc: func() core.Style { return textInputStyle(cx) }}, button(cx, "approval-submit-"+str(a, "id"), "提交", nil, "primary", func() { s.answerApproval(a, value.Get()) }))
+		buttons = append(buttons, editorInput{TestID: "approval-input-" + str(a, "id"), Label: "Agent 请求的内容", Value: value.Get, OnChange: value.Set, Multiline: true, Style: core.Style{MinHeight: core.Pt(72), MaxHeight: core.Pt(180)}, StyleFunc: func() core.Style { return textInputStyle(cx) }}, button(cx, "approval-submit-"+str(a, "id"), "提交", nil, "primary", func() { s.answerApproval(a, value.Get()) }))
 	}
 	if len(buttons) == 0 {
 		buttons = []core.Node{button(cx, "approve-"+str(a, "id"), "允许", nil, "primary", func() { s.decision(a, "accept") }), button(cx, "deny-"+str(a, "id"), "拒绝", nil, "outline", func() { s.decision(a, "decline") })}
 	}
 	for i, node := range buttons {
 		if v, ok := node.(core.View); ok {
-			v.Disabled = func() bool { return !s.connected() || s.actionPending(s.approvalKey(a)) }
+			v.Disabled = func() bool { return !s.canWriteSession() || s.actionPending(s.approvalKey(a)) }
 			buttons[i] = v
 		}
 	}

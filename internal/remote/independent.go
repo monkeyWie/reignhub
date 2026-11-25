@@ -144,12 +144,13 @@ func runRegistered(ctx context.Context, e *relay.Enrollment, host string, opts O
 	var sessions sync.WaitGroup
 	defer sessions.Wait()
 	for ctx.Err() == nil {
-		setup, cancel := context.WithTimeout(ctx, 5*time.Second)
-		l, err := nativepath.DialFirst(setup, e.Endpoint)
+		member := opts.Credentials.Current(e)
+		setup, cancel := context.WithTimeout(ctx, 15*time.Second)
+		l, _, err := member.Dial(setup, "register", relay.Invitation{Host: host, Device: host})
 		cancel()
 		if err == nil {
 			stop := context.AfterFunc(ctx, l.Close)
-			opts.Credentials.Current(e).Register(ctx, l, func(i relay.Invitation) {
+			member.ReceiveInvitations(ctx, l, func(i relay.Invitation) {
 				if opts.ResolveKey == nil {
 					return
 				}
@@ -164,17 +165,15 @@ func runRegistered(ctx context.Context, e *relay.Enrollment, host string, opts O
 				sessions.Go(func() {
 					defer func() { <-slots }()
 					setup, cancel := context.WithTimeout(ctx, 10*time.Second)
-					defer cancel()
-					path, err := nativepath.DialFirst(setup, e.Endpoint)
+					member := opts.Credentials.Current(e)
+					path, _, err := member.Dial(setup, "accept", i)
+					cancel()
 					if err != nil {
 						return
 					}
 					defer path.Close()
-					member := opts.Credentials.Current(e)
-					if member.Open(setup, path, "accept", i) == nil {
-						opts.Credentials.Renew(ctx, path, member)
-						ServePaired(ctx, path, host, &i, opts, d, status)
-					}
+					opts.Credentials.Renew(ctx, path, member)
+					ServePaired(ctx, path, host, &i, opts, d, status)
 				})
 			}, opts.Credentials)
 			stop()
@@ -196,8 +195,9 @@ func RegisterPaired(ctx context.Context, e *relay.Enrollment, host string, opts 
 func connectPaired(ctx context.Context, p Pairing, opts Options, device, grant string, endpoint nativepath.Endpoint, network string, node *relay.Enrollment) (*Client, error) {
 	var l *nativepath.Link
 	var err error
+	peer := relay.ID()
 	if network == "" {
-		l, err = nativepath.DialFirst(ctx, endpoint)
+		l, peer, err = node.Dial(ctx, "connect", relay.Invitation{Host: p.Host, Device: device})
 	} else {
 		l, err = nativepath.Dial(ctx, endpoint, network)
 	}
@@ -206,8 +206,7 @@ func connectPaired(ctx context.Context, p Pairing, opts Options, device, grant s
 	}
 	stop := context.AfterFunc(ctx, l.Close)
 	defer stop()
-	peer := relay.ID()
-	if node != nil {
+	if node != nil && network != "" {
 		err = node.Open(ctx, l, "connect", relay.Invitation{Host: p.Host, Device: device, Peer: peer})
 		if err != nil {
 			l.Close()

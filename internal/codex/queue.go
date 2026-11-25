@@ -126,11 +126,16 @@ func (b *appIPC) receiveQueue(m codexipc.Message, id string) {
 
 func (p *Provider) messageQueue(ctx context.Context, id, cursor string, accepted map[string]bool) *provider.MessageQueue {
 	b := p.appBridge()
-	if b == nil || cursor != "" {
+	if cursor != "" || b == nil && p.sharedBackend() == nil {
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
 	defer cancel()
+	if b == nil {
+		server := p.readServerQueue(ctx, id)
+		staged := readStagedQueue(ctx, codexProjectHome(), vscodeQueueFiles(), id)
+		return projectQueue(staged, server, accepted)
+	}
 	b.mu.Lock()
 	f, o := b.followed[id], b.owned[id]
 	var revision uint64

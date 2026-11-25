@@ -51,35 +51,46 @@ func sendObject(ctx context.Context, l *nativepath.Link, value any) error {
 	return l.Send(ctx, 0, data)
 }
 func (e *Enrollment) Open(ctx context.Context, l *nativepath.Link, op string, invite Invitation) error {
+	proof, err := e.answerChallenge(ctx, l, op, invite)
+	if err != nil {
+		return err
+	}
+	return confirmAdmission(ctx, l, proof)
+}
+
+func (e *Enrollment) answerChallenge(ctx context.Context, l *nativepath.Link, op string, invite Invitation) ([]byte, error) {
 	req := memberRequest{Invitation: invite, Op: op, Namespace: e.Namespace, Issuer: e.Issuer, Grant: e.Grant}
 	if l.Network == "WSS" {
 		req.Challenge = ID()
 	}
 	if err := sendObject(ctx, l, req); err != nil {
-		return err
+		return nil, err
 	}
 	nonce, err := l.Setup(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if l.Network == "WSS" {
 		// The public HTTPS certificate may belong to a reverse proxy. Bind the
 		// application-layer challenge to the node advertised during enrollment.
 		pub, err := b64.DecodeString(e.Pin)
 		if err != nil || len(pub) != ed25519.PublicKeySize || len(nonce) != 32+ed25519.SignatureSize || !ed25519.Verify(pub, nodeChallenge(req, nonce[:32]), nonce[32:]) {
-			return errors.New("relay node identity mismatch")
+			return nil, errors.New("relay node identity mismatch")
 		}
 		nonce = nonce[:32]
 	}
 	if !idPattern.Match(nonce) {
-		return errors.New("invalid node challenge")
+		return nil, errors.New("invalid node challenge")
 	}
 	key, err := hex.DecodeString(e.Key)
 	if err != nil || len(key) != 32 {
-		return errors.New("invalid enrollment")
+		return nil, errors.New("invalid enrollment")
 	}
-	proof := signingMAC(key, "join", op, invite.Host, invite.Device, invite.Peer, string(nonce))
-	if err = l.Send(ctx, 0, proof); err != nil {
+	return signingMAC(key, "join", op, invite.Host, invite.Device, invite.Peer, string(nonce)), nil
+}
+
+func confirmAdmission(ctx context.Context, l *nativepath.Link, proof []byte) error {
+	if err := l.Send(ctx, 0, proof); err != nil {
 		return err
 	}
 	ack, err := l.Setup(ctx)
@@ -276,13 +287,8 @@ func (r *rendezvous) serve(ctx, setup context.Context, l *nativepath.Link, secre
 	}
 }
 
-func (e *Enrollment) Register(ctx context.Context, l *nativepath.Link, notify func(Invitation), creds *RouteCredentials) error {
-	setup, cancel := context.WithTimeout(ctx, 10*time.Second)
-	err := e.Open(setup, l, "register", Invitation{e.Host, e.Host, ID()})
-	cancel()
-	if err != nil {
-		return err
-	}
+// ReceiveInvitations runs on a link already admitted for registration.
+func (e *Enrollment) ReceiveInvitations(ctx context.Context, l *nativepath.Link, notify func(Invitation), creds *RouteCredentials) error {
 	creds.Renew(ctx, l, e)
 	life, end := context.WithCancel(ctx)
 	defer end()

@@ -11,15 +11,21 @@ import (
 	"github.com/nsgo-dev/nsgo/icons/lucide"
 )
 
+const tooltipInset core.Points = 13 // Padding and border on each side.
+
+func tooltipMaxWidth(cx *core.Scope) core.Points {
+	return min(340, max(120, cx.Env().Window().Width-24))
+}
+
 // A bare Tooltip node has no surface in NSGo. Keep hints on the same bounded,
 // themed surface, including icon hints and project paths.
 func tooltipCard(cx *core.Scope, children ...core.Node) base.Tooltip {
 	return base.Tooltip{
 		Delay: 350 * time.Millisecond, Placement: core.PlaceTop, Offset: 8, Margin: 8,
-		PopupStyle: core.Style{Padding: core.All(12), Gap: 7, CornerRadius: 10, BorderWidth: 1},
+		PopupStyle: core.Style{Padding: core.All(tooltipInset - 1), Gap: 7, CornerRadius: 10, BorderWidth: 1},
 		PopupStyleFunc: func() core.Style {
 			c := palette(cx)
-			return core.Style{MaxWidth: core.Pt(min(340, max(120, cx.Env().Window().Width-24))), Background: c.elevated, Color: c.foreground, BorderColor: c.border,
+			return core.Style{MaxWidth: core.Pt(tooltipMaxWidth(cx)), Background: c.elevated, Color: c.foreground, BorderColor: c.border,
 				Shadows: []core.BoxShadow{{Offset: core.Point{Y: 4}, Blur: 16, Color: core.RGB(0).Faded(.16)}}}
 		}, Children: children,
 	}

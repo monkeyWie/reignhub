@@ -4,7 +4,8 @@
 an `io.ReadWriteCloser`. Neither depends on NSGo. Desktop composition injects
 the official NSGo engine from `clients/nsgo/terminalengine` through the native
 bridge and embedded runtime. The root service alone does not advertise terminal
-support. Web, iOS and Android do not expose terminal controls in this release.
+support. Web and iOS use the NSGo terminal view with the same remote connection to a
+paired desktop. Android requires upstream terminal renderer support.
 
 ## Ownership and lifetime
 
@@ -87,7 +88,7 @@ and cancellable. Unattended shells count toward the retained-terminal limit.
 
 Local use is available without an account or remote permission. Remote use
 requires the existing pairing/grant/Provider authorization plus the desktop's
-persisted `RemoteTerminalEnabled` setting, default false. Only local
+persisted `RemoteTerminalEnabled` setting, which defaults to true when absent. An explicit false persists across restarts. Only local
 `host.terminal.enabled` changes it. Permission is checked before dispatch and
 again before a successful response, including an in-flight read. Revocation
 blocks further access but does not kill a running command; application shutdown

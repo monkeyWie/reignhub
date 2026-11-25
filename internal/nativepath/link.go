@@ -67,11 +67,16 @@ func ServerTLS(key ed25519.PrivateKey) (*tls.Config, error) {
 	}
 	return &tls.Config{Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: key}}, MinVersion: tls.VersionTLS13, NextProtos: []string{ALPN}}, nil
 }
-func ClientTLS(pin string) *tls.Config {
+func ClientTLS(pin string) *tls.Config { return PinnedClientTLS(pin, ALPN) }
+
+// PinnedClientTLS verifies the peer key and the negotiated application protocol.
+func PinnedClientTLS(pin, protocol string) *tls.Config {
 	// The authenticated discovery channel names the exact public key. TLS
 	// proves possession during the handshake without requiring a public CA.
-	return &tls.Config{MinVersion: tls.VersionTLS13, NextProtos: []string{ALPN}, InsecureSkipVerify: true, VerifyConnection: func(cs tls.ConnectionState) error {
-		if len(cs.PeerCertificates) == 1 && cs.NegotiatedProtocol == ALPN {
+	return &tls.Config{MinVersion: tls.VersionTLS13, NextProtos: []string{protocol}, InsecureSkipVerify: true, VerifyConnection: func(cs tls.ConnectionState) error {
+		// The HTTP/1.1 WebSocket upgrade may omit ALPN when HTTP/2 is disabled.
+		negotiated := cs.NegotiatedProtocol == protocol || protocol == "http/1.1" && cs.NegotiatedProtocol == ""
+		if len(cs.PeerCertificates) == 1 && negotiated {
 			if key, ok := cs.PeerCertificates[0].PublicKey.(ed25519.PublicKey); ok && base64.RawURLEncoding.EncodeToString(key) == pin {
 				return nil
 			}

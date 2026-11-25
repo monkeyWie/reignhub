@@ -43,19 +43,21 @@ func For(cx *core.Scope) Messages {
 // its method, for the TSX declarations of the messages
 // (tsx.RegisterMessages).
 var Parameters = map[string][]string{
-	"UploadFailed":            {"error_"},
-	"SecondsAgo":              {"seconds"},
-	"FilterMatches":           {"count"},
-	"ActiveSessionCount":      {"count"},
-	"MoreProjectDetails":      {"count"},
-	"DetachedGitHead":         {"commit"},
-	"WorkedFor":               {"duration"},
-	"WorkSeconds":             {"seconds"},
-	"WorkMinutesSeconds":      {"minutes", "seconds"},
-	"WorkHoursMinutesSeconds": {"hours", "minutes", "seconds"},
-	"ControllerAuthorizedAt":  {"time_"},
-	"NumberedTerminal":        {"number"},
-	"KillTerminalTab":         {"number"},
+	"UploadFailed":               {"error_"},
+	"SecondsAgo":                 {"seconds"},
+	"CodexSessionRecoveryRemote": {"device"},
+	"FilterMatches":              {"count"},
+	"ActiveSessionCount":         {"count"},
+	"MoreProjectDetails":         {"count"},
+	"DetachedGitHead":            {"commit"},
+	"WorkedFor":                  {"duration"},
+	"WorkSeconds":                {"seconds"},
+	"WorkMinutesSeconds":         {"minutes", "seconds"},
+	"WorkHoursMinutesSeconds":    {"hours", "minutes", "seconds"},
+	"ControllerAuthorizedAt":     {"time_"},
+	"NumberedTerminal":           {"number"},
+	"KillTerminalTab":            {"number"},
+	"FullAccessWarning":          {"agent", "device"},
 }
 
 // Translation is a language's messages another package supplies:
@@ -63,20 +65,22 @@ var Parameters = map[string][]string{
 // of the others; a key or a field left out leaves the message to the
 // catalog.
 type Translation struct {
-	Texts                   map[string]string
-	UploadFailed            func(error_ string) string
-	SecondsAgo              func(seconds int) string
-	FilterMatches           func(count string) string
-	ActiveSessionCount      func(count string) string
-	MoreProjectDetails      func(count string) string
-	DetachedGitHead         func(commit string) string
-	WorkedFor               func(duration string) string
-	WorkSeconds             func(seconds int) string
-	WorkMinutesSeconds      func(minutes int, seconds int) string
-	WorkHoursMinutesSeconds func(hours int, minutes int, seconds int) string
-	ControllerAuthorizedAt  func(time_ string) string
-	NumberedTerminal        func(number int) string
-	KillTerminalTab         func(number int) string
+	Texts                      map[string]string
+	UploadFailed               func(error_ string) string
+	SecondsAgo                 func(seconds int) string
+	CodexSessionRecoveryRemote func(device string) string
+	FilterMatches              func(count string) string
+	ActiveSessionCount         func(count string) string
+	MoreProjectDetails         func(count string) string
+	DetachedGitHead            func(commit string) string
+	WorkedFor                  func(duration string) string
+	WorkSeconds                func(seconds int) string
+	WorkMinutesSeconds         func(minutes int, seconds int) string
+	WorkHoursMinutesSeconds    func(hours int, minutes int, seconds int) string
+	ControllerAuthorizedAt     func(time_ string) string
+	NumberedTerminal           func(number int) string
+	KillTerminalTab            func(number int) string
+	FullAccessWarning          func(agent string, device string) string
 }
 
 var supplied = map[string]Translation{}
@@ -109,6 +113,12 @@ const (
 	textOpenAgentApp
 	textLaunchCodex
 	textRestartCodex
+	textRestartCodexApp
+	textCodexRecoveryRetry
+	textCodexSessionUnavailable
+	textCodexSessionRecovery
+	textCodexSessionRecoveryUnavailable
+	textCodexSessionReconnecting
 	textRestartCodexConfirm
 	textRestartCodexWindowsConfirm
 	textAgentConnecting
@@ -208,9 +218,9 @@ const (
 	textTerminalExited
 	textTerminalCloseUnconfirmed
 	textTerminalUnsupported
-	textTerminalCopy
+	textCopy
 	textTerminalPaste
-	textTerminalSelectAll
+	textSelectAll
 	textRemoteTerminal
 	textRemoteTerminalHint
 	textPreviewLoading
@@ -237,6 +247,35 @@ const (
 	textBrowserLoginExpired
 	textOpenLoginBrowser
 	textBackToLogin
+	textScanDeviceCode
+	textScanOpenCamera
+	textScanFromPhotos
+	textScanEnterID
+	textScanCameraUnavailable
+	textScanInvalidDevice
+	textScanImageUnreadable
+	textScanNoCode
+	textScanWrongCode
+	textFullAccessLabel
+	textFullAccessTitle
+	textAllowFullAccess
+	textCancelFullAccess
+	textPickerModel
+	textPickerChooseModel
+	textPickerSearchModels
+	textPickerNoMatches
+	textPickerNoModels
+	textPickerVision
+	textThinkingEffort
+	textEffortUnspecified
+	textEffortOff
+	textEffortMinimal
+	textEffortLow
+	textEffortMedium
+	textEffortHigh
+	textEffortExtraHigh
+	textEffortMax
+	textPermissionUnsynced
 	numTexts
 )
 
@@ -269,6 +308,12 @@ var keyOfText = [numTexts]string{
 	"openAgentApp",
 	"launchCodex",
 	"restartCodex",
+	"restartCodexApp",
+	"codexRecoveryRetry",
+	"codexSessionUnavailable",
+	"codexSessionRecovery",
+	"codexSessionRecoveryUnavailable",
+	"codexSessionReconnecting",
 	"restartCodexConfirm",
 	"restartCodexWindowsConfirm",
 	"agentConnecting",
@@ -368,9 +413,9 @@ var keyOfText = [numTexts]string{
 	"terminalExited",
 	"terminalCloseUnconfirmed",
 	"terminalUnsupported",
-	"terminalCopy",
+	"copy",
 	"terminalPaste",
-	"terminalSelectAll",
+	"selectAll",
 	"remoteTerminal",
 	"remoteTerminalHint",
 	"previewLoading",
@@ -397,6 +442,35 @@ var keyOfText = [numTexts]string{
 	"browserLoginExpired",
 	"openLoginBrowser",
 	"backToLogin",
+	"scanDeviceCode",
+	"scanOpenCamera",
+	"scanFromPhotos",
+	"scanEnterID",
+	"scanCameraUnavailable",
+	"scanInvalidDevice",
+	"scanImageUnreadable",
+	"scanNoCode",
+	"scanWrongCode",
+	"fullAccessLabel",
+	"fullAccessTitle",
+	"allowFullAccess",
+	"cancelFullAccess",
+	"pickerModel",
+	"pickerChooseModel",
+	"pickerSearchModels",
+	"pickerNoMatches",
+	"pickerNoModels",
+	"pickerVision",
+	"thinkingEffort",
+	"effortUnspecified",
+	"effortOff",
+	"effortMinimal",
+	"effortLow",
+	"effortMedium",
+	"effortHigh",
+	"effortExtraHigh",
+	"effortMax",
+	"permissionUnsynced",
 }
 
 // textsEn are the messages without arguments in en.
@@ -427,6 +501,12 @@ var textsEn = i18n.NewTexts(""+
 	"Open the app"+
 	"Start Codex"+
 	"Restart Codex"+
+	"Restart Codex App"+
+	"Retry"+
+	"Codex session disconnected"+
+	"Sending and live replies are paused. If this session is open in VS Code, continue in that window. If it is open in Codex App, you can restart the app here."+
+	"Sending and live replies are paused. You can continue in Codex App."+
+	"Reconnecting to Codex…"+
 	"ReignHub will close and reopen Codex to connect it. Restarting Codex may interrupt work in progress."+
 	"ReignHub will forcibly stop and reopen Codex to connect it. This may interrupt work in progress."+
 	"Connecting…"+
@@ -554,7 +634,36 @@ var textsEn = i18n.NewTexts(""+
 	"Could not open the sign-in page. Try again."+
 	"This sign-in request expired. Start again to connect."+
 	"Open browser"+
-	"Back to sign-in",
+	"Back to sign-in"+
+	"Scan device QR code"+
+	"Open camera"+
+	"Choose from photos"+
+	"Enter device ID"+
+	"Camera unavailable. Choose a photo or enter the device ID."+
+	"Scan the ReignHub device QR code shown on your computer."+
+	"Could not read the QR code image."+
+	"No device QR code found in this image."+
+	"This QR code is not a ReignHub device code."+
+	"Full access"+
+	"Allow full access?"+
+	"Allow full access"+
+	"Cancel"+
+	"Model"+
+	"Choose model"+
+	"Search models…"+
+	"No matching models"+
+	"No models available"+
+	"Vision"+
+	"Thinking effort"+
+	"Unspecified"+
+	"Off"+
+	"Minimal"+
+	"Low"+
+	"Medium"+
+	"High"+
+	"Extra high"+
+	"Maximum"+
+	"Permission not synced",
 	[]uint16{
 		6,
 		17,
@@ -582,6 +691,12 @@ var textsEn = i18n.NewTexts(""+
 		12,
 		11,
 		13,
+		17,
+		5,
+		26,
+		155,
+		67,
+		24,
 		100,
 		96,
 		13,
@@ -710,6 +825,35 @@ var textsEn = i18n.NewTexts(""+
 		53,
 		12,
 		15,
+		19,
+		11,
+		18,
+		15,
+		58,
+		56,
+		33,
+		38,
+		43,
+		11,
+		18,
+		17,
+		6,
+		5,
+		12,
+		16,
+		18,
+		19,
+		6,
+		15,
+		11,
+		3,
+		7,
+		3,
+		6,
+		4,
+		10,
+		7,
+		21,
 	})
 
 // textsZhHans are the messages without arguments in zh-Hans.
@@ -740,6 +884,12 @@ var textsZhHans = i18n.NewTexts(""+
 	"请打开应用"+
 	"启动 Codex"+
 	"重启 Codex"+
+	"重启 Codex App"+
+	"重试"+
+	"Codex 会话连接异常"+
+	"此会话暂时无法发送消息或同步回复。如果会话仍在 VS Code 中打开，请回到原窗口继续。如果在 Codex App 中打开，可以在这里重启 App。"+
+	"此会话暂时无法发送消息或同步回复。你可以在 Codex App 中继续。"+
+	"正在重新连接 Codex…"+
 	"ReignHub 将退出并重新打开 Codex 以建立连接。重启可能中断正在执行的任务。"+
 	"ReignHub 将强制结束 Codex 进程，再重新打开以建立连接。这可能中断正在执行的任务。"+
 	"连接中…"+
@@ -867,7 +1017,36 @@ var textsZhHans = i18n.NewTexts(""+
 	"无法打开登录页面，请重试。"+
 	"登录申请已过期，请重新登录。"+
 	"打开浏览器"+
-	"返回登录",
+	"返回登录"+
+	"扫描设备二维码"+
+	"打开相机"+
+	"从相册识别"+
+	"输入设备 ID"+
+	"相机不可用，可以从相册识别或输入设备 ID。"+
+	"不是有效的 ReignHub 设备二维码，请扫描电脑上的设备二维码。"+
+	"无法读取二维码图片"+
+	"没有识别到设备二维码"+
+	"不是 ReignHub 设备二维码"+
+	"完全访问"+
+	"允许完全访问？"+
+	"允许完全访问"+
+	"取消"+
+	"模型"+
+	"选择模型"+
+	"搜索模型…"+
+	"没有匹配的模型"+
+	"暂无可用模型"+
+	"视觉"+
+	"思考强度"+
+	"未指定"+
+	"关闭"+
+	"最低"+
+	"低"+
+	"中"+
+	"高"+
+	"极高"+
+	"最高"+
+	"权限未同步",
 	[]uint16{
 		6,
 		12,
@@ -895,6 +1074,12 @@ var textsZhHans = i18n.NewTexts(""+
 		15,
 		12,
 		12,
+		16,
+		6,
+		24,
+		177,
+		86,
+		27,
 		100,
 		112,
 		12,
@@ -1023,6 +1208,35 @@ var textsZhHans = i18n.NewTexts(""+
 		42,
 		15,
 		12,
+		21,
+		12,
+		15,
+		15,
+		60,
+		82,
+		27,
+		30,
+		31,
+		12,
+		21,
+		18,
+		6,
+		6,
+		12,
+		15,
+		21,
+		18,
+		6,
+		12,
+		9,
+		6,
+		6,
+		3,
+		3,
+		3,
+		6,
+		6,
+		15,
 	})
 
 // texts returns the messages without arguments in lang, nil for a
@@ -1085,6 +1299,9 @@ func Supply(lang string, t Translation) {
 	if t.SecondsAgo != nil {
 		s.SecondsAgo = t.SecondsAgo
 	}
+	if t.CodexSessionRecoveryRemote != nil {
+		s.CodexSessionRecoveryRemote = t.CodexSessionRecoveryRemote
+	}
 	if t.FilterMatches != nil {
 		s.FilterMatches = t.FilterMatches
 	}
@@ -1117,6 +1334,9 @@ func Supply(lang string, t Translation) {
 	}
 	if t.KillTerminalTab != nil {
 		s.KillTerminalTab = t.KillTerminalTab
+	}
+	if t.FullAccessWarning != nil {
+		s.FullAccessWarning = t.FullAccessWarning
 	}
 	supplied[lang] = s
 	Catalog.Add(lang)
@@ -1358,6 +1578,78 @@ func RestartCodex(cx *core.Scope) string { return For(cx).RestartCodex() }
 
 // RestartCodex is the package's RestartCodex in the language of msgs.
 func (msgs Messages) RestartCodex() string { return msgs.text(textRestartCodex) }
+
+// RestartCodexApp says "Restart Codex App"
+// in the language the app shows under cx.
+func RestartCodexApp(cx *core.Scope) string { return For(cx).RestartCodexApp() }
+
+// RestartCodexApp is the package's RestartCodexApp in the language of msgs.
+func (msgs Messages) RestartCodexApp() string { return msgs.text(textRestartCodexApp) }
+
+// CodexRecoveryRetry says "Retry"
+// in the language the app shows under cx.
+func CodexRecoveryRetry(cx *core.Scope) string { return For(cx).CodexRecoveryRetry() }
+
+// CodexRecoveryRetry is the package's CodexRecoveryRetry in the language of msgs.
+func (msgs Messages) CodexRecoveryRetry() string { return msgs.text(textCodexRecoveryRetry) }
+
+// CodexSessionUnavailable says "Codex session disconnected"
+// in the language the app shows under cx.
+func CodexSessionUnavailable(cx *core.Scope) string { return For(cx).CodexSessionUnavailable() }
+
+// CodexSessionUnavailable is the package's CodexSessionUnavailable in the language of msgs.
+func (msgs Messages) CodexSessionUnavailable() string { return msgs.text(textCodexSessionUnavailable) }
+
+// CodexSessionRecovery says "Sending and live replies are paused. If this session is open in VS Code, continue in that window. If it is open in Codex App, you can restart the app here."
+// in the language the app shows under cx.
+func CodexSessionRecovery(cx *core.Scope) string { return For(cx).CodexSessionRecovery() }
+
+// CodexSessionRecovery is the package's CodexSessionRecovery in the language of msgs.
+func (msgs Messages) CodexSessionRecovery() string { return msgs.text(textCodexSessionRecovery) }
+
+// CodexSessionRecoveryRemote says "Sending and live replies are paused. Restart Codex App from ReignHub on {device} to reconnect."
+// in the language the app shows under cx.
+func CodexSessionRecoveryRemote(cx *core.Scope, device string) string {
+	return For(cx).CodexSessionRecoveryRemote(device)
+}
+
+// CodexSessionRecoveryRemote is the package's CodexSessionRecoveryRemote in the language of msgs.
+func (msgs Messages) CodexSessionRecoveryRemote(device string) string {
+	if i18n.IsPseudo(msgs.lang) {
+		return i18n.Pseudo(msgs.lang, Messages{lang: Source, mark: true}.CodexSessionRecoveryRemote(device))
+	}
+	for lang := msgs.lang; ; lang = i18n.Parent(lang) {
+		if f := supplied[lang].CodexSessionRecoveryRemote; f != nil {
+			return f(device)
+		}
+		switch lang {
+		case "", "en":
+			return "Sending and live replies are paused. Restart Codex App from ReignHub on " + msgs.arg(device) + " to reconnect."
+		case "zh-Hans":
+			return "此会话暂时无法发送消息或同步回复。请在「" + device + "」的 ReignHub 上重启 Codex App。"
+		}
+	}
+}
+
+// CodexSessionRecoveryUnavailable says "Sending and live replies are paused. You can continue in Codex App."
+// in the language the app shows under cx.
+func CodexSessionRecoveryUnavailable(cx *core.Scope) string {
+	return For(cx).CodexSessionRecoveryUnavailable()
+}
+
+// CodexSessionRecoveryUnavailable is the package's CodexSessionRecoveryUnavailable in the language of msgs.
+func (msgs Messages) CodexSessionRecoveryUnavailable() string {
+	return msgs.text(textCodexSessionRecoveryUnavailable)
+}
+
+// CodexSessionReconnecting says "Reconnecting to Codex…"
+// in the language the app shows under cx.
+func CodexSessionReconnecting(cx *core.Scope) string { return For(cx).CodexSessionReconnecting() }
+
+// CodexSessionReconnecting is the package's CodexSessionReconnecting in the language of msgs.
+func (msgs Messages) CodexSessionReconnecting() string {
+	return msgs.text(textCodexSessionReconnecting)
+}
 
 // RestartCodexConfirm says "ReignHub will close and reopen Codex to connect it. Restarting Codex may interrupt work in progress."
 // in the language the app shows under cx.
@@ -2308,12 +2600,12 @@ func TerminalUnsupported(cx *core.Scope) string { return For(cx).TerminalUnsuppo
 // TerminalUnsupported is the package's TerminalUnsupported in the language of msgs.
 func (msgs Messages) TerminalUnsupported() string { return msgs.text(textTerminalUnsupported) }
 
-// TerminalCopy says "Copy"
+// Copy says "Copy"
 // in the language the app shows under cx.
-func TerminalCopy(cx *core.Scope) string { return For(cx).TerminalCopy() }
+func Copy(cx *core.Scope) string { return For(cx).Copy() }
 
-// TerminalCopy is the package's TerminalCopy in the language of msgs.
-func (msgs Messages) TerminalCopy() string { return msgs.text(textTerminalCopy) }
+// Copy is the package's Copy in the language of msgs.
+func (msgs Messages) Copy() string { return msgs.text(textCopy) }
 
 // TerminalPaste says "Paste"
 // in the language the app shows under cx.
@@ -2322,12 +2614,12 @@ func TerminalPaste(cx *core.Scope) string { return For(cx).TerminalPaste() }
 // TerminalPaste is the package's TerminalPaste in the language of msgs.
 func (msgs Messages) TerminalPaste() string { return msgs.text(textTerminalPaste) }
 
-// TerminalSelectAll says "Select all"
+// SelectAll says "Select all"
 // in the language the app shows under cx.
-func TerminalSelectAll(cx *core.Scope) string { return For(cx).TerminalSelectAll() }
+func SelectAll(cx *core.Scope) string { return For(cx).SelectAll() }
 
-// TerminalSelectAll is the package's TerminalSelectAll in the language of msgs.
-func (msgs Messages) TerminalSelectAll() string { return msgs.text(textTerminalSelectAll) }
+// SelectAll is the package's SelectAll in the language of msgs.
+func (msgs Messages) SelectAll() string { return msgs.text(textSelectAll) }
 
 // RemoteTerminal says "Allow remote terminals"
 // in the language the app shows under cx.
@@ -2510,3 +2802,230 @@ func BackToLogin(cx *core.Scope) string { return For(cx).BackToLogin() }
 
 // BackToLogin is the package's BackToLogin in the language of msgs.
 func (msgs Messages) BackToLogin() string { return msgs.text(textBackToLogin) }
+
+// ScanDeviceCode says "Scan device QR code"
+// in the language the app shows under cx.
+func ScanDeviceCode(cx *core.Scope) string { return For(cx).ScanDeviceCode() }
+
+// ScanDeviceCode is the package's ScanDeviceCode in the language of msgs.
+func (msgs Messages) ScanDeviceCode() string { return msgs.text(textScanDeviceCode) }
+
+// ScanOpenCamera says "Open camera"
+// in the language the app shows under cx.
+func ScanOpenCamera(cx *core.Scope) string { return For(cx).ScanOpenCamera() }
+
+// ScanOpenCamera is the package's ScanOpenCamera in the language of msgs.
+func (msgs Messages) ScanOpenCamera() string { return msgs.text(textScanOpenCamera) }
+
+// ScanFromPhotos says "Choose from photos"
+// in the language the app shows under cx.
+func ScanFromPhotos(cx *core.Scope) string { return For(cx).ScanFromPhotos() }
+
+// ScanFromPhotos is the package's ScanFromPhotos in the language of msgs.
+func (msgs Messages) ScanFromPhotos() string { return msgs.text(textScanFromPhotos) }
+
+// ScanEnterID says "Enter device ID"
+// in the language the app shows under cx.
+func ScanEnterID(cx *core.Scope) string { return For(cx).ScanEnterID() }
+
+// ScanEnterID is the package's ScanEnterID in the language of msgs.
+func (msgs Messages) ScanEnterID() string { return msgs.text(textScanEnterID) }
+
+// ScanCameraUnavailable says "Camera unavailable. Choose a photo or enter the device ID."
+// in the language the app shows under cx.
+func ScanCameraUnavailable(cx *core.Scope) string { return For(cx).ScanCameraUnavailable() }
+
+// ScanCameraUnavailable is the package's ScanCameraUnavailable in the language of msgs.
+func (msgs Messages) ScanCameraUnavailable() string { return msgs.text(textScanCameraUnavailable) }
+
+// ScanInvalidDevice says "Scan the ReignHub device QR code shown on your computer."
+// in the language the app shows under cx.
+func ScanInvalidDevice(cx *core.Scope) string { return For(cx).ScanInvalidDevice() }
+
+// ScanInvalidDevice is the package's ScanInvalidDevice in the language of msgs.
+func (msgs Messages) ScanInvalidDevice() string { return msgs.text(textScanInvalidDevice) }
+
+// ScanImageUnreadable says "Could not read the QR code image."
+// in the language the app shows under cx.
+func ScanImageUnreadable(cx *core.Scope) string { return For(cx).ScanImageUnreadable() }
+
+// ScanImageUnreadable is the package's ScanImageUnreadable in the language of msgs.
+func (msgs Messages) ScanImageUnreadable() string { return msgs.text(textScanImageUnreadable) }
+
+// ScanNoCode says "No device QR code found in this image."
+// in the language the app shows under cx.
+func ScanNoCode(cx *core.Scope) string { return For(cx).ScanNoCode() }
+
+// ScanNoCode is the package's ScanNoCode in the language of msgs.
+func (msgs Messages) ScanNoCode() string { return msgs.text(textScanNoCode) }
+
+// ScanWrongCode says "This QR code is not a ReignHub device code."
+// in the language the app shows under cx.
+func ScanWrongCode(cx *core.Scope) string { return For(cx).ScanWrongCode() }
+
+// ScanWrongCode is the package's ScanWrongCode in the language of msgs.
+func (msgs Messages) ScanWrongCode() string { return msgs.text(textScanWrongCode) }
+
+// FullAccessLabel says "Full access"
+// in the language the app shows under cx.
+func FullAccessLabel(cx *core.Scope) string { return For(cx).FullAccessLabel() }
+
+// FullAccessLabel is the package's FullAccessLabel in the language of msgs.
+func (msgs Messages) FullAccessLabel() string { return msgs.text(textFullAccessLabel) }
+
+// FullAccessTitle says "Allow full access?"
+// in the language the app shows under cx.
+func FullAccessTitle(cx *core.Scope) string { return For(cx).FullAccessTitle() }
+
+// FullAccessTitle is the package's FullAccessTitle in the language of msgs.
+func (msgs Messages) FullAccessTitle() string { return msgs.text(textFullAccessTitle) }
+
+// FullAccessWarning says "In this session, {agent} can run commands and change files on {device} without asking for approval."
+// in the language the app shows under cx.
+func FullAccessWarning(cx *core.Scope, agent string, device string) string {
+	return For(cx).FullAccessWarning(agent, device)
+}
+
+// FullAccessWarning is the package's FullAccessWarning in the language of msgs.
+func (msgs Messages) FullAccessWarning(agent string, device string) string {
+	if i18n.IsPseudo(msgs.lang) {
+		return i18n.Pseudo(msgs.lang, Messages{lang: Source, mark: true}.FullAccessWarning(agent, device))
+	}
+	for lang := msgs.lang; ; lang = i18n.Parent(lang) {
+		if f := supplied[lang].FullAccessWarning; f != nil {
+			return f(agent, device)
+		}
+		switch lang {
+		case "", "en":
+			return "In this session, " + msgs.arg(agent) + " can run commands and change files on " + msgs.arg(device) + " without asking for approval."
+		case "zh-Hans":
+			return "在此会话中，" + agent + " 可以在「" + device + "」上执行命令、修改文件，无需再逐次请求批准。"
+		}
+	}
+}
+
+// AllowFullAccess says "Allow full access"
+// in the language the app shows under cx.
+func AllowFullAccess(cx *core.Scope) string { return For(cx).AllowFullAccess() }
+
+// AllowFullAccess is the package's AllowFullAccess in the language of msgs.
+func (msgs Messages) AllowFullAccess() string { return msgs.text(textAllowFullAccess) }
+
+// CancelFullAccess says "Cancel"
+// in the language the app shows under cx.
+func CancelFullAccess(cx *core.Scope) string { return For(cx).CancelFullAccess() }
+
+// CancelFullAccess is the package's CancelFullAccess in the language of msgs.
+func (msgs Messages) CancelFullAccess() string { return msgs.text(textCancelFullAccess) }
+
+// PickerModel says "Model"
+// in the language the app shows under cx.
+func PickerModel(cx *core.Scope) string { return For(cx).PickerModel() }
+
+// PickerModel is the package's PickerModel in the language of msgs.
+func (msgs Messages) PickerModel() string { return msgs.text(textPickerModel) }
+
+// PickerChooseModel says "Choose model"
+// in the language the app shows under cx.
+func PickerChooseModel(cx *core.Scope) string { return For(cx).PickerChooseModel() }
+
+// PickerChooseModel is the package's PickerChooseModel in the language of msgs.
+func (msgs Messages) PickerChooseModel() string { return msgs.text(textPickerChooseModel) }
+
+// PickerSearchModels says "Search models…"
+// in the language the app shows under cx.
+func PickerSearchModels(cx *core.Scope) string { return For(cx).PickerSearchModels() }
+
+// PickerSearchModels is the package's PickerSearchModels in the language of msgs.
+func (msgs Messages) PickerSearchModels() string { return msgs.text(textPickerSearchModels) }
+
+// PickerNoMatches says "No matching models"
+// in the language the app shows under cx.
+func PickerNoMatches(cx *core.Scope) string { return For(cx).PickerNoMatches() }
+
+// PickerNoMatches is the package's PickerNoMatches in the language of msgs.
+func (msgs Messages) PickerNoMatches() string { return msgs.text(textPickerNoMatches) }
+
+// PickerNoModels says "No models available"
+// in the language the app shows under cx.
+func PickerNoModels(cx *core.Scope) string { return For(cx).PickerNoModels() }
+
+// PickerNoModels is the package's PickerNoModels in the language of msgs.
+func (msgs Messages) PickerNoModels() string { return msgs.text(textPickerNoModels) }
+
+// PickerVision says "Vision"
+// in the language the app shows under cx.
+func PickerVision(cx *core.Scope) string { return For(cx).PickerVision() }
+
+// PickerVision is the package's PickerVision in the language of msgs.
+func (msgs Messages) PickerVision() string { return msgs.text(textPickerVision) }
+
+// ThinkingEffort says "Thinking effort"
+// in the language the app shows under cx.
+func ThinkingEffort(cx *core.Scope) string { return For(cx).ThinkingEffort() }
+
+// ThinkingEffort is the package's ThinkingEffort in the language of msgs.
+func (msgs Messages) ThinkingEffort() string { return msgs.text(textThinkingEffort) }
+
+// EffortUnspecified says "Unspecified"
+// in the language the app shows under cx.
+func EffortUnspecified(cx *core.Scope) string { return For(cx).EffortUnspecified() }
+
+// EffortUnspecified is the package's EffortUnspecified in the language of msgs.
+func (msgs Messages) EffortUnspecified() string { return msgs.text(textEffortUnspecified) }
+
+// EffortOff says "Off"
+// in the language the app shows under cx.
+func EffortOff(cx *core.Scope) string { return For(cx).EffortOff() }
+
+// EffortOff is the package's EffortOff in the language of msgs.
+func (msgs Messages) EffortOff() string { return msgs.text(textEffortOff) }
+
+// EffortMinimal says "Minimal"
+// in the language the app shows under cx.
+func EffortMinimal(cx *core.Scope) string { return For(cx).EffortMinimal() }
+
+// EffortMinimal is the package's EffortMinimal in the language of msgs.
+func (msgs Messages) EffortMinimal() string { return msgs.text(textEffortMinimal) }
+
+// EffortLow says "Low"
+// in the language the app shows under cx.
+func EffortLow(cx *core.Scope) string { return For(cx).EffortLow() }
+
+// EffortLow is the package's EffortLow in the language of msgs.
+func (msgs Messages) EffortLow() string { return msgs.text(textEffortLow) }
+
+// EffortMedium says "Medium"
+// in the language the app shows under cx.
+func EffortMedium(cx *core.Scope) string { return For(cx).EffortMedium() }
+
+// EffortMedium is the package's EffortMedium in the language of msgs.
+func (msgs Messages) EffortMedium() string { return msgs.text(textEffortMedium) }
+
+// EffortHigh says "High"
+// in the language the app shows under cx.
+func EffortHigh(cx *core.Scope) string { return For(cx).EffortHigh() }
+
+// EffortHigh is the package's EffortHigh in the language of msgs.
+func (msgs Messages) EffortHigh() string { return msgs.text(textEffortHigh) }
+
+// EffortExtraHigh says "Extra high"
+// in the language the app shows under cx.
+func EffortExtraHigh(cx *core.Scope) string { return For(cx).EffortExtraHigh() }
+
+// EffortExtraHigh is the package's EffortExtraHigh in the language of msgs.
+func (msgs Messages) EffortExtraHigh() string { return msgs.text(textEffortExtraHigh) }
+
+// EffortMax says "Maximum"
+// in the language the app shows under cx.
+func EffortMax(cx *core.Scope) string { return For(cx).EffortMax() }
+
+// EffortMax is the package's EffortMax in the language of msgs.
+func (msgs Messages) EffortMax() string { return msgs.text(textEffortMax) }
+
+// PermissionUnsynced says "Permission not synced"
+// in the language the app shows under cx.
+func PermissionUnsynced(cx *core.Scope) string { return For(cx).PermissionUnsynced() }
+
+// PermissionUnsynced is the package's PermissionUnsynced in the language of msgs.
+func (msgs Messages) PermissionUnsynced() string { return msgs.text(textPermissionUnsynced) }

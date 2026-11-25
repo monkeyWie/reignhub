@@ -25,6 +25,7 @@ type acpRuntime struct {
 	init            acp.InitializeResponse
 	mu              sync.Mutex
 	native          acp.SessionId
+	modes           *acp.SessionModeState
 	config          []acp.SessionConfigOption
 	replaying       bool
 	replay          []provider.Turn
@@ -67,9 +68,10 @@ func (r *acpRuntime) Alive() bool {
 	}
 }
 func (r *acpRuntime) Capabilities() provider.Capabilities {
-	return provider.Capabilities{MaxAttachmentBytes: 20 << 20, Streaming: true, History: true, Create: true, Send: true, Interrupt: true, Approvals: true, ImageInput: r.init.AgentCapabilities.PromptCapabilities.Image, FileInput: r.init.AgentCapabilities.PromptCapabilities.EmbeddedContext}
+	return provider.Capabilities{ComposerSettings: true, MaxAttachmentBytes: 20 << 20, Streaming: true, History: true, Create: true, Send: true, Interrupt: true, Approvals: true, ImageInput: r.init.AgentCapabilities.PromptCapabilities.Image, FileInput: r.init.AgentCapabilities.PromptCapabilities.EmbeddedContext}
 }
 func (r *acpRuntime) Open(ctx context.Context, cwd, native string) (string, error) {
+	var modes *acp.SessionModeState
 	var options []acp.SessionConfigOption
 	if native != "" {
 		if !r.init.AgentCapabilities.LoadSession {
@@ -89,6 +91,7 @@ func (r *acpRuntime) Open(ctx context.Context, cwd, native string) (string, erro
 			return "", err
 		}
 		options = resp.ConfigOptions
+		modes = resp.Modes
 		if len(replay) > 0 {
 			r.host.replaceHistory(r.localID, replay)
 		}
@@ -102,9 +105,11 @@ func (r *acpRuntime) Open(ctx context.Context, cwd, native string) (string, erro
 		r.native = resp.SessionId
 		r.mu.Unlock()
 		options = resp.ConfigOptions
+		modes = resp.Modes
 	}
 	r.mu.Lock()
 	r.config = options
+	r.modes = modes
 	r.mu.Unlock()
 	return native, nil
 }
@@ -120,17 +125,8 @@ func acpModels(options []acp.SessionConfigOption) []provider.Model {
 		if v == nil || !(string(v.Id) == "model" || v.Category != nil && string(*v.Category) == "model") {
 			continue
 		}
-		rows := []acp.SessionConfigSelectOption{}
-		if v.Options.Ungrouped != nil {
-			rows = append(rows, (*v.Options.Ungrouped)...)
-		}
-		if v.Options.Grouped != nil {
-			for _, g := range *v.Options.Grouped {
-				rows = append(rows, g.Options...)
-			}
-		}
-		for _, m := range rows {
-			out = append(out, provider.Model{ID: string(m.Value), Name: m.Name, Default: m.Value == v.CurrentValue})
+		for _, choice := range selectChoices(v, "model") {
+			out = append(out, provider.Model{ID: choice.ID, Name: choice.Label, Default: choice.ID == string(v.CurrentValue)})
 		}
 	}
 	return out
@@ -156,6 +152,9 @@ func (r *acpRuntime) Prompt(ctx context.Context, text string, attachments []prov
 				if m.ID == model {
 					found = true
 				}
+			}
+			if found && string(v.CurrentValue) == model {
+				break
 			}
 			if found {
 				resp, err := r.conn.SetSessionConfigOption(ctx, acp.SetSessionConfigOptionRequest{ValueId: &acp.SetSessionConfigOptionValueId{SessionId: native, ConfigId: v.Id, Value: acp.SessionConfigValueId(model)}})
@@ -295,6 +294,9 @@ func (r *acpRuntime) SessionUpdate(ctx context.Context, n acp.SessionNotificatio
 		return nil
 	}
 	u := n.Update
+	if u.CurrentModeUpdate != nil && r.modes != nil {
+		r.modes.CurrentModeId = u.CurrentModeUpdate.CurrentModeId
+	}
 	if u.ConfigOptionUpdate != nil {
 		r.config = u.ConfigOptionUpdate.ConfigOptions
 	}
@@ -304,6 +306,9 @@ func (r *acpRuntime) SessionUpdate(ctx context.Context, n acp.SessionNotificatio
 		return nil
 	}
 	r.mu.Unlock()
+	if u.CurrentModeUpdate != nil || u.ConfigOptionUpdate != nil {
+		r.host.log.Publish(provider.StreamEvent{Kind: "composerSettings", SessionID: r.localID})
+	}
 	if u.AgentMessageChunk != nil {
 		r.host.text(r.localID, acpContentText(u.AgentMessageChunk.Content))
 	}

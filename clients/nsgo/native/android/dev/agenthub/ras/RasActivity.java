@@ -4,23 +4,45 @@ import android.os.Bundle;
 import android.os.Build;
 import android.content.Intent;
 import android.provider.Settings;
+import android.view.View;
 import android.view.ViewGroup;
+import android.view.inputmethod.InputMethodManager;
+import android.widget.EditText;
 import android.view.WindowManager;
 import dev.oneo.nsgo.NsgoActivity;
 import dev.oneo.nsgo.NsgoView;
 import java.util.HashMap;
-import java.util.HashSet;
 
 /** The official NSGo host API keeps native features outside app/protocol code. */
 public final class RasActivity extends NsgoActivity {
-    final HashSet<QrCamera> scanners = new HashSet<>();
     boolean resumed;
     boolean screenAwake;
     NsgoView rasView;
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
+        // Android also chooses an IME state when a newly opened window gains focus.
+        getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_HIDDEN
+                | WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         NsgoView view = (NsgoView)((ViewGroup)findViewById(android.R.id.content)).getChildAt(0);
         rasView = view;
+        view.handle("ras.focus-composer", (data, reply) -> {
+            View entry = data instanceof String ? view.findViewWithTag(data) : null;
+            View field = entry == null ? null : entry.findViewWithTag("chat-input");
+            if (field instanceof EditText && field.isShown() && field.isEnabled() && !field.hasFocus()) {
+                EditText editor = (EditText) field;
+                boolean showOnFocus = editor.getShowSoftInputOnFocus();
+                editor.setShowSoftInputOnFocus(false);
+                try {
+                    if (editor.requestFocus()) {
+                        // A keyboard from the previous conversation may still be visible.
+                        getSystemService(InputMethodManager.class).hideSoftInputFromWindow(editor.getWindowToken(), 0);
+                    }
+                } finally {
+                    editor.setShowSoftInputOnFocus(showOnFocus);
+                }
+            }
+            reply.resolve(null);
+        });
         view.handle("ras.screen-awake", (data, reply) -> {
             screenAwake = data instanceof java.util.Map && Boolean.TRUE.equals(((java.util.Map<?,?>)data).get("enabled"));
             updateScreenAwake();
@@ -33,7 +55,6 @@ public final class RasActivity extends NsgoActivity {
         };
         ConnectionService.networkListener = () -> view.send("ras.network-change", new HashMap<String,Object>());
         view.handle("ras.background", (data, reply) -> ConnectionService.request(this, resumed, data, reply));
-        view.registerComponent("ras.qr-camera", (context, events) -> new QrCamera(this, events));
         view.handle("ras.background-settings", (data, reply) -> {
             // Open the system list; changing battery exemptions stays the user's choice.
             startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
@@ -87,12 +108,10 @@ public final class RasActivity extends NsgoActivity {
     @Override protected void onResume() {
         super.onResume(); resumed = true;
         updateScreenAwake();
-        for (QrCamera c : new HashSet<>(scanners)) c.resume();
     }
     @Override protected void onPause() {
         resumed = false;
         updateScreenAwake();
-        for (QrCamera c : new HashSet<>(scanners)) c.pause();
         super.onPause();
     }
     @Override protected void onDestroy() {
@@ -106,11 +125,5 @@ public final class RasActivity extends NsgoActivity {
     private void updateScreenAwake() {
         if (screenAwake && resumed) getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-    }
-    @Override public void onRequestPermissionsResult(int request, String[] permissions, int[] results) {
-        super.onRequestPermissionsResult(request, permissions, results);
-        if (request == QrCamera.PERMISSION) {
-            for (QrCamera c : new HashSet<>(scanners)) c.permissionResult();
-        }
     }
 }

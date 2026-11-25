@@ -116,7 +116,9 @@ func TestMixedMarkdownScrollStopsWithTextInView(t *testing.T) {
 		turns = append(turns, Object{"id": fmt.Sprint(i), "status": "completed", "items": []Object{{"id": "u", "role": "user", "text": fmt.Sprintf("Fixture question %d", i)}, {"id": "a", "role": "assistant", "text": answer}}})
 	}
 	app, _ := startViewportFixture(t, turns)
-	app.WaitFor("text:Fixture question 14", 4*time.Second)
+	// The final answer spans multiple viewports; the question before it can
+	// already be outside the mounted window when the list settles at the end.
+	app.WaitFor("id:message-body-14|a", 4*time.Second)
 	for _, dy := range []core.Points{-420, -710, -480, -820, 400, 720, -490, 780} {
 		app.Scroll(viewportList, dy)
 		app.WaitUntil(time.Second, func() bool { return viewportTextBands(app) == [3]bool{true, true, true} })

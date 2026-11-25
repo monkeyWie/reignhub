@@ -47,7 +47,7 @@ func attachmentCardsRoleFixture(t *testing.T, dark bool, role string, options ..
 			a["name"] = strings.Repeat("long-filename-", 12) + ".apk"
 			if i < 2 {
 				a["kind"], a["name"] = "image", fmt.Sprintf("photo-%d.png", i)
-				s.images[s.key()+"|"+str(a, "id")+"|false"] = f.data
+				s.images[s.imageKey(a, false)] = f.data
 			}
 			if i == 4 {
 				a["inline"] = true

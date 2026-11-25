@@ -172,6 +172,9 @@ func (p *Provider) serverQueueChanged(raw json.RawMessage) {
 	}
 	b := p.appBridge()
 	if b == nil {
+		if p.sharedBackend() != nil {
+			p.stream().log.Publish(provider.StreamEvent{Kind: "snapshot", SessionID: params.ThreadID})
+		}
 		return
 	}
 	b.mu.Lock()

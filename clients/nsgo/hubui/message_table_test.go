@@ -1,6 +1,7 @@
 package hubui
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -42,4 +43,46 @@ func TestMessageTableOverflowThumbRevealsLastColumn(t *testing.T) {
 	if bar := app.FindMounted(thumb); bar.Props.PointerEvents != core.PointerEventsNone {
 		t.Fatal("a table that fits kept an interactive scrollbar")
 	}
+}
+
+func TestMessageCodeScrollbarFollowsAndDrags(t *testing.T) {
+	code := "BEGIN_" + strings.Repeat("0123456789", 20) + "_END"
+	app := nsgotest.Start(t, func(cx *core.Scope) core.Node {
+		s := newState(cx, newDemoAPI())
+		s.applyColors()
+		installScrollbars(cx)
+		return core.List{TestID: "messages", Style: fill, Count: func() int { return 1 }, EstimatedSize: 140, Row: func(cx *core.Scope, _ core.ListRow) core.Node {
+			return core.View{Style: fill.Merge(core.Style{Padding: core.All(24)}), Children: []core.Node{s.message(cx, func() Message {
+				return Message{ID: "code", Role: "assistant", Text: "~~~text\n" + code + "\n~~~"}
+			})}}
+		}}
+	}, nsgotest.Size(600, 220), nsgotest.Environment(core.Environment{OS: core.OSMacOS, Idiom: core.IdiomDesktop}), nsgotest.Measure())
+	const rail = "label:水平滚动条"
+	scroll := func() *nsgotest.View {
+		for n := app.FindMounted("text:" + code); n != nil; n = n.Parent {
+			if n.Kind == nsgotest.KindScroll && n.Scroll.Horizontal {
+				return n
+			}
+		}
+		t.Fatal("code has no horizontal viewport")
+		return nil
+	}
+	app.Scroll("text:"+code, 280)
+	thumbX := func() core.Points {
+		return app.FindMounted(rail).Children[0].Children[0].Style.Transform.TranslateX
+	}
+	app.WaitUntil(time.Second, func() bool { return scroll().Offset.X > 0 && thumbX() > 0 })
+	app.Screenshot("code-horizontal-scrolled")
+	bar := app.FindMounted(rail)
+	view := scroll().Bounds()
+	x := thumbX() + 14
+	app.DragAt("id:messages", core.Point{X: view.Origin.X + x, Y: view.Origin.Y + view.Size.Height - 4}, core.Point{X: bar.Frame.Size.Width - x - 5})
+	app.WaitUntil(time.Second, func() bool {
+		v := scroll()
+		return v.Offset.X >= v.Content.Width-v.Frame.Size.Width-3
+	})
+	app.Screenshot("code-horizontal-dragged")
+	end := thumbX()
+	app.Scroll("text:"+code, -240)
+	app.WaitUntil(time.Second, func() bool { return thumbX() < end-1 })
 }

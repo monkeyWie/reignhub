@@ -1,6 +1,6 @@
 # 服务平台实施约定
 
-公共仓库保留官网与文档源码，但开源 Go/Worker 部署及发布归档只包含 NSGo Web 远控客户端和服务核心，根地址统一跳转 `/chat/`。官网通过独立 CI 构建与发布，不进入自部署包。私有仓库通过 submodule 组合公共核心、Better Auth、Waffo 和可配置权益，官方只部署一个 Worker，绑定 D1 和 Durable Objects。另提供独立 Go 服务 `reignhub-server`，使用本地 SQLite，内嵌 NSGo Web 控制台并默认开启 TCP/UDP 探测；不依赖 Cloudflare。通过 `config.json` 可关闭各组件、调整独立监听地址，也能以 `{"services":{"stun":{}}}` 仅运行探测服务配合 Worker。Go 与 Worker 复用 `/p2p/*`、设备配对、签名租约和加密帧协议，控制端不按服务端实现分叉。
+公共仓库保留官网与文档源码，但开源 Go/Worker 部署及发布归档只包含 NSGo Web 远控客户端和服务核心，根地址统一跳转 `/chat/`。官网通过独立 CI 构建与发布，不进入自部署包。私有仓库通过 submodule 组合公共核心、Better Auth、Waffo 和可配置权益，官方只部署一个 Worker，绑定 D1 和 Durable Objects。另提供独立 Go 服务 `reignhub-server`，使用本地 SQLite，内嵌 NSGo Web 控制台并默认开启 TCP/UDP 探测；不依赖 Cloudflare。通过 `config.json` 可关闭各组件、调整独立监听地址，也能以 `{"services":{"control":{"enable":false},"relay":{"enable":false}}}` 仅运行探测服务配合 Worker。Go 与 Worker 复用 `/p2p/*`、设备配对、签名租约和加密帧协议，控制端不按服务端实现分叉。
 
 不兼容旧接口；所有连接接口使用 `/p2p/`。信令 `/p2p/signal` 与业务中继 `/p2p/relay` 分离。客户端只配置一个服务 origin，公共和自建 STUN 并行参与候选发现；原生端并行尝试 WebRTC/UDP 和 TCP，浏览器使用 WebRTC。官方免费账号仅允许直连，付费账号可回退官方 WSS；自部署无商业配额。移除 cloudflared/Tunnel。
 

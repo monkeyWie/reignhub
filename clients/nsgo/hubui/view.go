@@ -223,7 +223,7 @@ func (s *State) workspaceView(cx *core.Scope) core.Node {
 				})
 				return core.View{Style: fill, Children: []core.Node{s.workspaceToolbar(cx), core.View{Style: fill.Merge(core.Style{Direction: core.Row}), Children: []core.Node{
 					core.View{TestID: "sidebar-container", StyleFunc: func() core.Style {
-						return core.Style{Display: choose(s.sidebarHidden.Get(), core.DisplayNone, core.DisplayFlex), Width: core.Pt(s.sidebarWidth()), MinHeight: core.Pt(0), FlexShrink: 0}
+						return core.Style{Display: choose(s.sidebarCollapsed(), core.DisplayNone, core.DisplayFlex), Width: core.Pt(s.sidebarWidth()), MinHeight: core.Pt(0), FlexShrink: 0}
 					}, Children: []core.Node{s.directory(cx)}},
 					s.resize(cx),
 					core.Dynamic(func(cx *core.Scope) core.Node {
@@ -246,7 +246,7 @@ func (s *State) resize(cx *core.Scope) core.Node {
 	w := s.sessionWidth
 	var initial core.Points
 	return core.View{TestID: "resize-sessions", Style: core.Style{Width: core.Pt(5), FlexShrink: 0, AlignItems: core.AlignCenter}, StyleFunc: func() core.Style {
-		return core.Style{Display: choose(s.sidebarHidden.Get(), core.DisplayNone, core.DisplayFlex), Background: palette(cx).background}
+		return core.Style{Display: choose(s.sidebarCollapsed(), core.DisplayNone, core.DisplayFlex), Background: palette(cx).background}
 	}, Class: "cursor-col-resize", OnPan: func(e core.PanEvent) {
 		if e.Phase == core.GestureBegan {
 			initial = w.Get()

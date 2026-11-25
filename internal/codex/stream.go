@@ -62,7 +62,7 @@ func (p *Provider) watch(ctx context.Context, session, epoch string, after int64
 		}
 		b.mu.Unlock()
 		if (repair || batch.Reset) && !b.owns(session) {
-			owner, err := b.follow(ctx, session)
+			owner, err := b.followForRead(ctx, session, false)
 			if err != nil {
 				return provider.StreamBatch{}, err
 			}
@@ -75,7 +75,10 @@ func (p *Provider) watch(ctx context.Context, session, epoch string, after int64
 				}
 			}
 		}
-	} else if shared := p.activeShared(); shared {
+	} else if shared := p.sharedBackend(); shared != nil {
+		if probe && !shared.connected(ctx) {
+			return provider.StreamBatch{}, provider.ErrUnavailable
+		}
 		if err := p.followShared(ctx, session); err != nil {
 			return provider.StreamBatch{}, err
 		}
@@ -198,6 +201,12 @@ func (p *Provider) observeStream(m rpc.Message) {
 			event.Kind, event.Item = "snapshot", nil
 		}
 		s.log.Publish(event)
+		if m.Method == "item/completed" && item.Type == "agentMessage" {
+			var questionItem struct{ Questions []json.RawMessage }
+			if json.Unmarshal(params.Item, &questionItem) == nil && len(questionItem.Questions) > 0 {
+				s.log.Publish(provider.StreamEvent{Kind: "approval", SessionID: params.ThreadID, TurnID: params.TurnID})
+			}
+		}
 		return
 	}
 	if params.ItemID == "" || params.Delta == "" {

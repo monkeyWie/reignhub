@@ -3,6 +3,7 @@ package filelink
 
 import (
 	"net/url"
+	pathpkg "path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -33,6 +34,38 @@ func Path(href string) (path string, location bool) {
 		path = path[1:]
 	}
 	return path, location
+}
+
+// SourceLocation formats a reference using the execution device's path syntax.
+// It only joins strings and never resolves a path on the controller filesystem.
+func SourceLocation(href, cwd string) (label, hint string) {
+	p, location := Path(href)
+	if !location {
+		return "", ""
+	}
+	base, fragment, _ := strings.Cut(href, "#")
+	position := strings.TrimPrefix(lineSuffix.FindString(base), ":")
+	if lineFragment.MatchString(fragment) {
+		position = strings.NewReplacer("L", "", "C", ":").Replace(fragment)
+	}
+	suffix := " (line " + position + ")"
+	windows := drivePath(p) || strings.HasPrefix(p, `\\`) || !strings.HasPrefix(p, "/") && (drivePath(cwd) || strings.HasPrefix(cwd, `\\`))
+	if windows {
+		p = strings.ReplaceAll(p, `\`, "/")
+		cwd = strings.ReplaceAll(cwd, `\`, "/")
+	}
+	label = pathpkg.Base(p) + suffix
+	if !drivePath(p) && !strings.HasPrefix(p, "/") && (drivePath(cwd) || strings.HasPrefix(cwd, "/")) {
+		unc := strings.HasPrefix(cwd, "//")
+		p = pathpkg.Join(cwd, p)
+		if unc {
+			p = "/" + p
+		}
+	}
+	if windows {
+		p = strings.ReplaceAll(p, "/", `\`)
+	}
+	return label, p + suffix
 }
 
 func Resolve(href, cwd string) string {

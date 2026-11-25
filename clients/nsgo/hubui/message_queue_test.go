@@ -138,3 +138,14 @@ func TestMessageQueuePartialSourceFailureRetainsOtherMessages(t *testing.T) {
 		t.Fatal("ready empty queue did not clear stale rows")
 	}
 }
+
+func TestCachedMessageQueueClearsOnCompletedSnapshot(t *testing.T) {
+	cached := Object{"queue": queueViewFixture()}
+	page := Object{"turns": []Object{{"id": "t"}}}
+	if len(objects(object(previewTranscript(cached, page)["queue"])["messages"])) != 2 {
+		t.Fatal("a history fragment discarded the cached queue")
+	}
+	if _, present := mergeLatest(cached, page)["queue"]; present {
+		t.Fatal("a complete snapshot with no queue resurrected cached messages")
+	}
+}

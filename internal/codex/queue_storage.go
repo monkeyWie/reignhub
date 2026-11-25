@@ -17,47 +17,49 @@ import (
 
 // Read only; never create, migrate or write Codex's storage. Once SQLite is
 // initialized it is authoritative and the JSON export may be obsolete.
-func readDesktopQueue(ctx context.Context, home, id string) (*provider.MessageQueue, error) {
+func openDesktopStateDB(ctx context.Context, home string) (*sql.DB, error) {
+	db, err := openReadOnlyCodexDB(ctx, filepath.Join(home, ".codex-global-state.sqlite"))
+	if db == nil || err != nil {
+		return nil, err
+	}
+	var version int
+	if err = db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err == nil && version == 1 {
+		return db, nil
+	}
+	db.Close()
+	if err == nil && version != 0 {
+		err = errors.New("unsupported Codex global state version")
+	}
+	return nil, err
+}
+
+func openReadOnlyCodexDB(ctx context.Context, file string) (*sql.DB, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	file := filepath.Join(home, ".codex-global-state.sqlite")
-	if _, err := os.Stat(file); err == nil {
-		uriPath := filepath.ToSlash(file)
-		if !strings.HasPrefix(uriPath, "/") {
-			uriPath = "/" + uriPath
+	if _, err := os.Stat(file); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
 		}
-		u := url.URL{Scheme: "file", Path: uriPath, RawQuery: "mode=ro&_pragma=query_only(1)&_pragma=busy_timeout(50)"}
-		db, err := sql.Open("sqlite", u.String())
-		if err != nil {
-			return nil, err
-		}
-		defer db.Close()
-		db.SetMaxOpenConns(1)
-		var version int
-		if err = db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
-			return nil, err
-		}
-		if version != 0 {
-			if version != 1 {
-				return nil, errors.New("unsupported Codex global state version")
-			}
-			var raw string
-			err = db.QueryRowContext(ctx, "SELECT CASE WHEN length(CAST(value AS BLOB)) <= ? THEN value ELSE NULL END FROM settings WHERE scope = 'global' AND key = 'queued-follow-ups'", maxQueueBytes).Scan(&raw)
-			if errors.Is(err, sql.ErrNoRows) {
-				return normalizeQueue(json.RawMessage("[]"))
-			}
-			if err != nil {
-				return nil, err
-			}
-			return desktopQueueEntry(ctx, []byte(raw), id)
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
+	uriPath := filepath.ToSlash(file)
+	if !strings.HasPrefix(uriPath, "/") {
+		uriPath = "/" + uriPath
+	}
+	u := url.URL{Scheme: "file", Path: uriPath, RawQuery: "mode=ro&_pragma=query_only(1)&_pragma=busy_timeout(50)"}
+	db, err := sql.Open("sqlite", u.String())
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(1)
+	return db, nil
+}
+
+func readDesktopStateJSON(ctx context.Context, home string) (map[string]json.RawMessage, error) {
 	f, err := os.Open(filepath.Join(home, ".codex-global-state.json"))
 	if errors.Is(err, os.ErrNotExist) {
-		return normalizeQueue(json.RawMessage("[]"))
+		return nil, nil
 	}
 	if err != nil {
 		return nil, err
@@ -81,8 +83,31 @@ func readDesktopQueue(ctx context.Context, home, id string) (*provider.MessageQu
 	if state == nil {
 		return nil, errors.New("invalid Codex global state")
 	}
-	queue, ok := state["queued-follow-ups"]
-	if !ok {
+	return state, nil
+}
+
+func readDesktopQueue(ctx context.Context, home, id string) (*provider.MessageQueue, error) {
+	db, err := openDesktopStateDB(ctx, home)
+	if err != nil {
+		return nil, err
+	}
+	var queue json.RawMessage
+	if db != nil {
+		defer db.Close()
+		var raw string
+		err = db.QueryRowContext(ctx, "SELECT CASE WHEN length(CAST(value AS BLOB)) <= ? THEN value ELSE NULL END FROM settings WHERE scope = 'global' AND key = 'queued-follow-ups'", maxQueueBytes).Scan(&raw)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return nil, err
+		}
+		queue = json.RawMessage(raw)
+	} else {
+		state, err := readDesktopStateJSON(ctx, home)
+		if err != nil {
+			return nil, err
+		}
+		queue = state["queued-follow-ups"]
+	}
+	if len(queue) == 0 {
 		return normalizeQueue(json.RawMessage("[]"))
 	}
 	return desktopQueueEntry(ctx, queue, id)

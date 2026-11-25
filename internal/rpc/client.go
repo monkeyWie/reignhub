@@ -51,16 +51,19 @@ type Client struct {
 }
 
 func Dial(ctx context.Context, endpoint string, observer Observer) (*Client, error) {
-	return dial(ctx, endpoint, nil, observer)
+	return dial(ctx, endpoint, nil, observer, &http.Client{Timeout: 10 * time.Second})
 }
 
 // DialAuthenticated connects to an app-server with WebSocket capability auth.
 func DialAuthenticated(ctx context.Context, endpoint, token string, observer Observer) (*Client, error) {
-	return dial(ctx, endpoint, http.Header{"Authorization": {"Bearer " + token}}, observer)
+	return DialWithClient(ctx, endpoint, token, observer, &http.Client{Timeout: 10 * time.Second})
 }
 
-func dial(ctx context.Context, endpoint string, headers http.Header, observer Observer) (*Client, error) {
-	httpClient := &http.Client{Timeout: 10 * time.Second}
+// DialWithClient uses the supplied transport to authenticate the server before sending the bearer token.
+func DialWithClient(ctx context.Context, endpoint, token string, observer Observer, httpClient *http.Client) (*Client, error) {
+	return dial(ctx, endpoint, http.Header{"Authorization": {"Bearer " + token}}, observer, httpClient)
+}
+func dial(ctx context.Context, endpoint string, headers http.Header, observer Observer, httpClient *http.Client) (*Client, error) {
 	if strings.HasPrefix(endpoint, "unix://") {
 		path := strings.TrimPrefix(endpoint, "unix://")
 		httpClient.Transport = &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {

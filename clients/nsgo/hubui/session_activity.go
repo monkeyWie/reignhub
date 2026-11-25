@@ -79,6 +79,9 @@ func unreadDot(cx *core.Scope, id, title string) core.Node {
 
 func (s *State) sessionStatusLabel(ss Object) string {
 	l := locales.For(s.cx)
+	if s.codexRecoveryIssue(ss) {
+		return l.CodexSessionUnavailable()
+	}
 	if s.sessionActive(ss) {
 		if sessionWaiting(ss) {
 			return l.SessionWaiting()
@@ -91,15 +94,17 @@ func (s *State) sessionStatusLabel(ss Object) string {
 	return ""
 }
 
+func sessionStatusVisibility(cx *core.Scope) core.Style {
+	if !cx.Env().Desktop() {
+		return core.Style{}
+	}
+	hidden := &core.Style{Opacity: core.Alpha(0), PointerEvents: core.PointerEventsNone}
+	return core.Style{GroupStyle: &core.GroupStyle{Name: "session-row", Hover: hidden, FocusWithin: hidden}}
+}
+
 func (s *State) sessionStatusIndicator(cx *core.Scope, id string, item func() directoryRow) core.Node {
 	status := core.NewMemo(cx, func() string { s.read(); return s.sessionStatusLabel(item().Session) })
-	return core.View{TestID: "status-" + id, Style: core.Style{Position: core.Absolute, Top: core.Pt(10), Right: core.Pt(12), Width: core.Pt(16), Height: core.Pt(18), AlignItems: core.AlignCenter, JustifyContent: core.JustifyCenter}, StyleFunc: func() core.Style {
-		if !cx.Env().Desktop() {
-			return core.Style{}
-		}
-		hidden := &core.Style{Opacity: core.Alpha(0), PointerEvents: core.PointerEventsNone}
-		return core.Style{GroupStyle: &core.GroupStyle{Name: "session-row", Hover: hidden, FocusWithin: hidden}}
-	}, Children: []core.Node{core.Dynamic(func(cx *core.Scope) core.Node {
+	return core.View{TestID: "status-" + id, Style: core.Style{Position: core.Absolute, Top: core.Pt(10), Right: core.Pt(choose(cx.Env().Desktop(), sidebarRowActionRight+7, 12)), Width: core.Pt(16), Height: core.Pt(18), AlignItems: core.AlignCenter, JustifyContent: core.JustifyCenter}, StyleFunc: func() core.Style { return sessionStatusVisibility(cx) }, Children: []core.Node{core.Dynamic(func(cx *core.Scope) core.Node {
 		label := status.Get()
 		if label == "" {
 			return nil

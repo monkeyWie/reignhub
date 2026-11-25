@@ -46,6 +46,8 @@ The Go node listens for QUIC and TLS/TCP using ALPN `reign-native/2`. A host reg
 
 Managed discovery may include two `alternates` in addition to the primary node. Both endpoints receive the same bounded set, and the host registers on each. Managed nodes read the optional `relayUsageUrl` from a verified operator grant. Before forwarding business data the node signs an HTTPS admission request with its node key. The operator counts distinct host/controller pairs across transports. A forwarding holder releases on standby or close. A lost release expires after 60 seconds. Probe and setup traffic is bounded to 64 KiB per minute per candidate before admission. Private nodes require only local enrollment. Route probe chunks use record type 3 on independent links or the `probe` flag on WebSocket frames. A controller can demote a relay with record 4 or a `standby` frame.
 
+Native peers prepare the configured node transports in parallel through the membership challenge. The host submits one registration or invitation acceptance proof at a time. A candidate becomes usable when the node acknowledges admission. A stalled confirmation yields to another prepared transport within the setup budget. A lone candidate keeps the full budget. Controller attempts through alternate transports use distinct peer IDs so late invitations cannot claim another attempt.
+
 The host advertises a persistent listener in encrypted pairing and native hello messages. The controller retains up to eight addresses for each of three recent local networks. Reachable saved addresses support a fresh connection after both devices restart. A changed NAT mapping can require new candidates exchanged through a reachable node or signaling service.
 
 Native records contain a one-byte lane, a big-endian uint16 body length and at most 32 KiB of payload. QUIC opens two bidirectional streams in order, each prefixed by its one-byte lane index. Lane 0 carries control and ordinary messages, lane 1 carries bulk data. TLS/TCP multiplexes both record types on one stream. Application payloads retain their authenticated device-to-device chunk framing. Progressive transcript responses between negotiated native peers carry a per-request sequence starting at 1, including the final success. The receiving inbox withholds out-of-order fragments within its existing byte and count limits.
@@ -150,6 +152,15 @@ metadata carries the queue once; subsequent text fragments may omit it.
 Assemblers preserve it, cache content with its watch cursor, and replay newer
 queue events over a delayed history snapshot. No new mutation or public service
 route is introduced. Go relay and Worker room continue forwarding opaque frames.
+
+When an Agent advertises `composerSettings`, the controller can read the
+selected session's controls with `composer.settings` and an optional model ID.
+Each control has an ID, label, choices and an optional selected choice. A choice
+marked `fullAccess: true` requires explicit controller confirmation before selection
+is sent to the host.
+`composer.configure` sends the selected control, value and model in `params`.
+It uses the same per-session command ordering and receipts as other writes.
+A `composerSettings` watch event invalidates the control choices.
 
 ## Desktop terminal endpoint operations
 

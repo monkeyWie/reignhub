@@ -5,8 +5,10 @@ package codex
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -92,4 +94,82 @@ func TestDirectoryUsesLiveAppOwnerWithoutOpeningConversation(t *testing.T) {
 	if remaining != 0 {
 		t.Fatal("inactive directory-only follower was not released")
 	}
+}
+
+func TestLockedMissingOwnerWarnsOnlyAffectedSessionAndClearsOnRecovery(t *testing.T) {
+	t.Setenv("CODEX_HOME", t.TempDir())
+	p := New(config.Config{}, "", events.New())
+	backendFixture(t, p, func(m rpc.Message) (any, *rpc.Error) {
+		switch m.Method {
+		case "thread/list":
+			return json.RawMessage(`{"data":[{"id":"held","source":"vscode"},{"id":"unlocked","source":"vscode"}]}`), nil
+		case "thread/read":
+			return json.RawMessage(`{"thread":{"id":"held","status":{"type":"notLoaded"}}}`), nil
+		case "thread/turns/list", "thread/queue/list", "project/list":
+			return json.RawMessage(`{"data":[]}`), nil
+		default:
+			t.Errorf("availability check reached executor: %s", m.Method)
+			return nil, nil
+		}
+	})
+	var misses atomic.Int32
+	var reachable atomic.Bool
+	var f *ipcFixture
+	f = attachIPCFixture(t, p, func(m codexipc.Message) (codexipc.Message, bool) {
+		switch m.Method {
+		case "thread-owner-discovery":
+			if !reachable.Load() {
+				misses.Add(1)
+				return codexipc.Message{ResultType: "error", Error: "no-client-found"}, true
+			}
+		case "thread-stream-following-changed":
+			go f.snapshot("held", 1, "isolated fixture")
+		}
+		return codexipc.Message{}, false
+	})
+	dir := filepath.Join(f.b.home, "thread-writer-locks")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	lock, err := os.Create(filepath.Join(dir, "held.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	checkRows := func(warn bool) {
+		t.Helper()
+		page, err := p.Sessions(ctx, "")
+		if err != nil || len(page.Sessions) != 2 || page.Sessions[0].CodexOwnerUnreachable != warn || page.Sessions[1].CodexOwnerUnreachable || f.b.needsSharedDesktop() != warn {
+			t.Fatalf("directory/restart availability: %+v %v", page, err)
+		}
+	}
+	checkRows(true)
+	if misses.Load() != 2 {
+		t.Fatalf("expected two read-only discovery attempts, got %d", misses.Load())
+	}
+	history, err := p.Transcript(ctx, "held", "")
+	if err != nil || !history.Session.CodexOwnerUnreachable {
+		t.Fatalf("persisted history failed to retain session warning: %+v %v", history.Session, err)
+	}
+	if _, err := p.Probe(ctx, "held", "", 0); !errors.Is(err, errOwnerUnreachable) {
+		t.Fatalf("probe acknowledged an unreachable owner: %v", err)
+	}
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_UN); err != nil {
+		t.Fatal(err)
+	}
+	checkRows(false)
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+		t.Fatal(err)
+	}
+	checkRows(true)
+	reachable.Store(true)
+	if _, err := p.Probe(ctx, "held", "", 0); err != nil {
+		t.Fatalf("recovery probe: %v", err)
+	}
+	checkRows(false)
 }

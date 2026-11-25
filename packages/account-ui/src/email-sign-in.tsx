@@ -146,6 +146,7 @@ export function EmailSignIn({
   return (
     <form
       className="email-sign-in"
+      autoCapitalize="none"
       onSubmit={(event) => {
         event.preventDefault();
         void submit(step);

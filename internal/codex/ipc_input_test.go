@@ -16,6 +16,36 @@ import (
 	"github.com/monkeyWie/reignhub/internal/rpc"
 )
 
+func TestDirectInputsCarryDistinctDesktopMessageIDs(t *testing.T) {
+	p := New(config.Config{}, "", events.New())
+	requests := make(chan rpc.Message, 3)
+	backendFixture(t, p, func(m rpc.Message) (any, *rpc.Error) {
+		if m.Method == "thread/resume" {
+			return map[string]any{}, nil
+		}
+		requests <- m
+		return map[string]any{}, nil
+	})
+	if err := p.Send(t.Context(), "session", "same"); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := p.Steer(t.Context(), "session", "turn", "same"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seen := map[string]bool{}
+	for _, method := range []string{"turn/start", "turn/steer", "turn/steer"} {
+		m := <-requests
+		params := decodeObject(m.Params)
+		id := stringValue(params["clientUserMessageId"])
+		if m.Method != method || id == "" || seen[id] || method == "turn/steer" && params["expectedTurnId"] != "turn" {
+			t.Fatalf("invalid message identity or routing for %s: %s", m.Method, m.Params)
+		}
+		seen[id] = true
+	}
+}
+
 func TestIPCTextInputsSafeForOptimisticAppRendering(t *testing.T) {
 	p := New(config.Config{}, "", events.New())
 	backendFixture(t, p, func(m rpc.Message) (any, *rpc.Error) {

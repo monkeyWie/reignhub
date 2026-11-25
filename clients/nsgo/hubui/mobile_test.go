@@ -30,7 +30,7 @@ func TestMobileMultiDeviceNavigation(t *testing.T) {
 func TestMobileScannerEvents(t *testing.T) { testMobileDeviceAndScanner(t, core.OS("android"), true) }
 func testMobileDeviceAndScanner(t *testing.T, os core.OS, scan bool) {
 	api := &mobileDemo{newDemoAPI()}
-	app := nsgotest.Start(t, func(cx *core.Scope) core.Node { return RootWithAPI(cx, api, true) }, nsgotest.Size(390, 844), nsgotest.Environment(core.Environment{OS: os, Idiom: core.IdiomPhone, Locale: "zh-CN"}))
+	app := nsgotest.Start(t, func(cx *core.Scope) core.Node { return RootWithAPI(cx, api, true) }, nsgotest.Size(390, 844), nsgotest.Environment(core.Environment{OS: os, Idiom: core.IdiomPhone, Locale: "zh-CN", ScanCode: true}))
 	showSessionDirectory(t, app)
 	app.WaitFor("id:device-second", time.Second)
 	app.Find("id:device-demo-device")
@@ -53,20 +53,28 @@ func testMobileDeviceAndScanner(t *testing.T, os core.OS, scan bool) {
 	if !scan {
 		return
 	}
+	app.ScanCode = func(opts nsgotest.CodeScan) (*core.ScannedCode, error) {
+		if !opts.Wants(core.CodeQR) {
+			t.Fatal("scanner did not request QR codes")
+		}
+		return &core.ScannedCode{Kind: core.CodeQR, Text: "invalid fixture"}, nil
+	}
 	app.Press("id:scan-qr")
-	app.Find("id:live-qr-camera")
-	app.Emit("id:live-qr-camera", "code", "not-a-ras-qr")
 	app.Find("text:不是有效的 ReignHub 设备二维码，请扫描电脑上的设备二维码。")
 	code := pairingCode(Object{"service": DefaultService, "connectionId": "654321", "public": "fixture-public"})
-	app.Emit("id:live-qr-camera", "code", code)
+	app.ScanCode = func(nsgotest.CodeScan) (*core.ScannedCode, error) {
+		return &core.ScannedCode{Kind: core.CodeQR, Text: code}, nil
+	}
+	app.Press("id:scan-camera")
 	app.Find("id:dialog-connect")
 	if app.Find(pairingInput).Text != "654321" {
 		t.Fatal("scan did not prefill target ID")
 	}
-	if app.Exists("id:live-qr-camera") {
+	if app.Exists("id:dialog-scan") {
 		t.Fatal("camera must close after a valid scan")
 	}
 	app.Press("id:dialog-cancel")
+	app.ScanCode = nil
 	app.Press("id:scan-qr")
 	pressWorkspaceBack(t, app)
 	if app.Exists("id:dialog-scan") {

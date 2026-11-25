@@ -184,6 +184,7 @@ export function AccountPage({
                   id="new-password"
                   className="field"
                   type="password"
+                  autoCapitalize="none"
                   autoComplete="new-password"
                   minLength={8}
                   maxLength={128}
@@ -220,6 +221,7 @@ export function AccountPage({
             <input
               className="field"
               aria-label="设备授权码"
+              autoCapitalize="none"
               placeholder="设备授权码"
               value={code}
               onChange={(e) => setCode(e.target.value)}

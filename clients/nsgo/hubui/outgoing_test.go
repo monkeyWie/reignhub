@@ -45,13 +45,20 @@ func TestOnlyFreshSnapshotAfterRPCSettlesRemovesAbsentLocalMessage(t *testing.T)
 	for _, started := range []time.Time{{}, now.Add(-time.Second)} {
 		s.reconcileOutgoing(started)
 		if len(s.outgoing[s.key()]) != 1 {
-			t.Fatal("old/cache snapshot removed failed message")
+			t.Fatal("old/cache snapshot removed accepted message")
 		}
 	}
 	s.reconcileOutgoing(now.Add(time.Second))
-	if len(s.outgoing[s.key()]) != 0 {
-		t.Fatal("authoritatively absent message retained")
+	if len(s.outgoing[s.key()]) != 1 {
+		t.Fatal("fresh history removed an accepted send before its echo")
 	}
+	s.transcript = outgoingTranscript(Object{"id": "echo", "role": "user", "text": "missing"})
+	s.reconcileOutgoing(time.Time{})
+	s.rebuildMessages()
+	if len(s.outgoing[s.key()]) != 0 || len(s.messageRows) != 1 || s.messageRows[0].ID != "turn|echo" {
+		t.Fatal("delayed user echo did not replace exactly one accepted send")
+	}
+	s.transcript = outgoingTranscript()
 	m.Status = "failed"
 	s.outgoing[s.key()] = []*outgoingMessage{m}
 	s.reconcileOutgoing(now.Add(time.Second))

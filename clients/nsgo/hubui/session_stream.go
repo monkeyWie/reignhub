@@ -91,24 +91,15 @@ func (w *sessionStream) startSnapshot() {
 	// its measured tail or temporarily shorten an already complete answer.
 	// Keep that page readable until this initial verification completes.
 	verifyingPage := !w.verified && len(objects(w.s.transcript["turns"])) > 0 && len(w.s.messageRows) > 0
+	var coldStore historyStorage
+	if w.target != control.LocalTarget && w.s.transcript == nil && w.s.snapshots != nil {
+		coldStore = w.s.snapshots.storage
+	}
 	go func() {
 		previewCtx, stopPreviews := context.WithCancel(w.ctx)
 		defer stopPreviews()
 		observe := observeTranscriptPreviews(previewCtx, w.s.cx.Post, func(partial Object) {
-			if verifyingPage || !w.current() || !w.snapshotMatches(epoch, partial) {
-				return
-			}
-			if str(partial, "partialTurn") != "" && len(objects(w.s.transcript["turns"])) != 0 {
-				return
-			}
-			if len(objects(partial["turns"])) == 0 {
-				return
-			}
-			preview := previewTranscript(w.s.transcript, partial)
-			if w.baseline {
-				preview, _ = applyEvents(preview, w.replayAfter(partial))
-			}
-			w.s.setTranscript(preview)
+			w.applySnapshotPreview(epoch, partial, verifyingPage, coldStore != nil)
 		})
 		// Transport idle budgets reset on every received frame. A total deadline
 		// would discard a healthy history transfer on a slow connection.
@@ -122,66 +113,113 @@ func (w *sessionStream) startSnapshot() {
 		}
 		v, err := rpc(ctx, w.s.api, w.target, w.provider, w.session, "transcript", options)
 		stopPreviews()
+		t := object(v)
+		var cached Object
+		if err == nil && coldStore != nil && str(t, "partialTurn") != "" {
+			// On a slow store the network may win the race with session entry.
+			// Verify the durable boundary before a suffix can replace that cache.
+			var page persistence.HistoryPage
+			page, err = coldStore.ReadPage(w.ctx, persistence.Session{Env: w.target, Provider: w.provider, ID: w.session}, openingPageQuery())
+			cached = page.View()
+		}
 		w.s.cx.Post(func() {
 			if !w.current() {
 				return
 			}
-			w.snapshotInFlight = false
-			w.historyError = err
-			w.s.setConnectionIssue(w.target, "transcript", err)
-			if err != nil {
-				w.journal = nil
-				w.syncing(false)
-				delay := w.historyRetry.Next(err)
-				w.nextSnapshot = time.Now().Add(delay)
-				w.historyRetryVersion++
-				version := w.historyRetryVersion
-				time.AfterFunc(delay, func() {
+			if cached != nil && w.s.transcript == nil {
+				w.s.applyCachedTranscript(cached)
+			}
+			prior := w.s.transcript
+			if err == nil && w.snapshotMatches(epoch, t) && w.target != control.LocalTarget && needsEarlierSnapshotPage(prior, t, !w.verified) {
+				go func() {
+					t, err := w.bridgeSnapshot(prior, t)
 					w.s.cx.Post(func() {
-						if w.current() && w.historyRetryVersion == version {
-							w.startSnapshot()
+						if w.current() {
+							w.finishSnapshot(started, epoch, t, err)
 						}
 					})
-				})
+				}()
 				return
 			}
-			w.historyRetry.Reset()
-			w.nextSnapshot = time.Time{}
-			t := object(v)
-			if !w.snapshotMatches(epoch, t) {
-				w.startSnapshot()
-				return
-			}
-			w.verified = true
-			// History is readable even if the live subscription has not joined yet.
-			// Its event boundary can establish the initial baseline independently.
-			if w.epoch == "" {
-				w.epoch, w.cursor = str(t, "streamEpoch"), number(t, "streamCursor")
-			}
-			// A completed history response may predate live text already on screen.
-			// Replay everything received since the request began; UTF-16 offsets make
-			// overlapping snapshot/delta content idempotent.
-			var refresh bool
-			t, refresh = applyEvents(t, w.replayAfter(t))
-			w.snapshotAgain = w.snapshotAgain || refresh
-			w.journal = nil
-			w.baseline = true
-			if str(t, "nextCursor") == "" {
-				t["_baseline"] = true
-			}
-			w.s.setTranscript(t)
-			w.s.reconcileOutgoing(started)
-			w.s.rebuildMessages()
-			w.s.trackNativeTask(w.target, w.provider, w.session, t)
-			if !w.snapshotAgain {
-				w.checkpoint()
-			}
-			w.syncing(false)
-			if w.snapshotAgain {
-				w.startSnapshot()
-			}
+			w.finishSnapshot(started, epoch, t, err)
 		})
 	}()
+}
+
+func (w *sessionStream) applySnapshotPreview(epoch string, partial Object, verifyingPage, coldStore bool) {
+	if !w.current() || !w.snapshotMatches(epoch, partial) {
+		return
+	}
+	if verifyingPage || (!w.verified && w.s.openingRow.turn != "" && len(w.s.messageRows) > 0) {
+		return
+	}
+	if str(partial, "partialTurn") != "" && (coldStore || len(objects(w.s.transcript["turns"])) != 0) {
+		return
+	}
+	if len(objects(partial["turns"])) == 0 {
+		return
+	}
+	preview := previewTranscript(w.s.transcript, partial)
+	if w.baseline {
+		preview, _ = applyEvents(preview, w.replayAfter(partial))
+	}
+	w.s.setTranscript(preview)
+}
+
+func (w *sessionStream) finishSnapshot(started time.Time, epoch string, t Object, err error) {
+	w.snapshotInFlight = false
+	w.historyError = err
+	w.s.setConnectionIssue(w.target, "transcript", err)
+	if err != nil {
+		w.journal = nil
+		w.syncing(false)
+		delay := w.historyRetry.Next(err)
+		w.nextSnapshot = time.Now().Add(delay)
+		w.historyRetryVersion++
+		version := w.historyRetryVersion
+		time.AfterFunc(delay, func() {
+			w.s.cx.Post(func() {
+				if w.current() && w.historyRetryVersion == version {
+					w.startSnapshot()
+				}
+			})
+		})
+		return
+	}
+	w.historyRetry.Reset()
+	w.nextSnapshot = time.Time{}
+	if !w.snapshotMatches(epoch, t) {
+		w.startSnapshot()
+		return
+	}
+	w.verified = true
+	// History is readable even if the live subscription has not joined yet.
+	// Its event boundary can establish the initial baseline independently.
+	if w.epoch == "" {
+		w.epoch, w.cursor = str(t, "streamEpoch"), number(t, "streamCursor")
+	}
+	// A completed history response may predate live text already on screen.
+	// Replay everything received since the request began; UTF-16 offsets make
+	// overlapping snapshot/delta content idempotent.
+	var refresh bool
+	t, refresh = applyEvents(t, w.replayAfter(t))
+	w.snapshotAgain = w.snapshotAgain || refresh
+	w.journal = nil
+	w.baseline = true
+	if str(t, "nextCursor") == "" {
+		t["_baseline"] = true
+	}
+	w.s.setTranscript(t)
+	w.s.reconcileOutgoing(started)
+	w.s.rebuildMessages()
+	w.s.trackNativeTask(w.target, w.provider, w.session, t)
+	if !w.snapshotAgain {
+		w.checkpoint()
+	}
+	w.syncing(false)
+	if w.snapshotAgain {
+		w.startSnapshot()
+	}
 }
 
 func (w *sessionStream) snapshotMatches(epoch string, t Object) bool {
@@ -211,6 +249,9 @@ func previewTranscript(old, partial Object) Object {
 		previous[str(turn, "id")] = turn
 	}
 	next := copyObject(partial)
+	if _, present := next["queue"]; !present && old["queue"] != nil {
+		next["queue"] = old["queue"]
+	}
 	turns := []Object{}
 	for _, turn := range objects(partial["turns"]) {
 		value := copyObject(turn)
@@ -259,7 +300,18 @@ func (w *sessionStream) batch(b Object) {
 		w.resetCursor = number(b, "cursor")
 		w.s.streamEpoch, w.s.streamCursor = "", 0
 	}
+	refreshSettings := w.epoch == "" || flag(b, "reset")
 	w.epoch, w.cursor = str(b, "epoch"), number(b, "cursor")
+	for _, e := range events {
+		if str(e, "kind") == "composerSettings" {
+			refreshSettings = true
+			break
+		}
+	}
+	if refreshSettings {
+		w.s.composerControlsRevision++
+		w.s.changed()
+	}
 	if !w.baseline && !w.snapshotInFlight {
 		w.startSnapshot()
 	}

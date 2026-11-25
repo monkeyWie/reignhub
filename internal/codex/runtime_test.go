@@ -18,6 +18,9 @@ import (
 var runtimeFixtureSetup = func() error { return nil }
 
 func TestMain(m *testing.M) {
+	if RunSharedWorker() {
+		return
+	}
 	if os.Getenv("REIGN_TEST_STDIO_CODEX") == "1" {
 		if err := runtimeFixtureSetup(); err != nil {
 			os.Exit(3)

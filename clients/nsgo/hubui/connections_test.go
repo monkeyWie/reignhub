@@ -17,6 +17,7 @@ type connectionFixture struct {
 	broken, offline, blockWatch, autoReconnect              atomic.Bool
 	watchStarts, watchCancels, snapshots, reconnects, sends atomic.Int32
 	version                                                 atomic.Int32
+	firstWatchFailure                                       <-chan struct{}
 }
 
 func (*connectionFixture) CanHost() bool { return false }
@@ -34,7 +35,13 @@ func (f *connectionFixture) Call(ctx context.Context, method string, p Object, t
 				epoch := choose(f.version.Load() > 0, "resumed", "initial")
 				return Object{"epoch": epoch, "cursor": 0, "reset": str(r, "epoch") != epoch}, nil
 			}
-			f.watchStarts.Add(1)
+			if f.watchStarts.Add(1) == 1 && f.firstWatchFailure != nil {
+				select {
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				case <-f.firstWatchFailure:
+				}
+			}
 			if f.blockWatch.Load() {
 				<-ctx.Done()
 				f.watchCancels.Add(1)
@@ -64,12 +71,14 @@ func (f *connectionFixture) Call(ctx context.Context, method string, p Object, t
 }
 
 func TestAutomaticConnectionErrorsUseStatusInsteadOfOverlay(t *testing.T) {
-	f := &connectionFixture{demoAPI: newDemoAPI()}
+	failed := make(chan struct{})
+	f := &connectionFixture{demoAPI: newDemoAPI(), firstWatchFailure: failed}
 	// Keep automatic retry disabled so the failure remains inspectable.
 	app := nsgotest.Start(t, func(cx *core.Scope) core.Node { return RootWithAPI(cx, f, true) }, nsgotest.Size(390, 844))
 	openDemoChat(t, app)
 	app.Type("id:chat-input", "保留草稿")
 	f.broken.Store(true)
+	close(failed)
 	app.Find("role:button 连接正常")
 	if app.Exists("id:error-banner") {
 		t.Fatal("automatic read failure showed an operation error")

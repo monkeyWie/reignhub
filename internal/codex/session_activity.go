@@ -37,6 +37,8 @@ func (p *Provider) enrichSessionActivity(ctx context.Context, sessions []provide
 			continue
 		}
 		if !locked {
+			b.clearOwnerUnreachable(ss.ID)
+			ss.CodexOwnerUnreachable = false
 			// Owners may release their writer immediately after publishing the
 			// final state. Preserve that terminal observation before unsubscribing.
 			if raw := b.activityState(ss.ID); len(raw) > 0 {
@@ -62,8 +64,9 @@ func (p *Provider) enrichSessionActivity(ctx context.Context, sessions []provide
 			defer func() { <-slots }()
 			raw := b.activityState(ss.ID)
 			if len(raw) == 0 {
-				owner, err := b.followFor(ctx, ss.ID, true)
+				owner, err := b.followForRead(ctx, ss.ID, true)
 				if err != nil || owner == "" {
+					ss.CodexOwnerUnreachable = b.ownerUnreachable(ss.ID)
 					return
 				}
 				raw, err = b.waitState(ctx, ss.ID, owner)
@@ -71,6 +74,7 @@ func (p *Provider) enrichSessionActivity(ctx context.Context, sessions []provide
 					return
 				}
 			}
+			ss.CodexOwnerUnreachable = b.ownerUnreachable(ss.ID)
 			applyIPCActivity(ss, raw)
 		}()
 	}

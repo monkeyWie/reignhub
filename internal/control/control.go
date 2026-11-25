@@ -328,6 +328,19 @@ func (d *Dispatcher) dispatch(ctx context.Context, r Request) (any, error) {
 			return nil, fmt.Errorf("此 Agent 暂不支持模型切换")
 		}
 		return nil, p.Send(ctx, r.Session, r.Text)
+	case "composer.settings", "composer.configure":
+		agent, ok := p.(provider.ComposerProvider)
+		if !ok || r.Session == "" {
+			return nil, fmt.Errorf("此会话不支持修改 Agent 设置")
+		}
+		if r.Method == "composer.settings" {
+			return agent.ComposerControls(ctx, r.Session, r.Model)
+		}
+		var change provider.ComposerChange
+		if json.Unmarshal(r.Params, &change) != nil || change.Value == "" || len(change.Value) > 2048 {
+			return nil, fmt.Errorf("无效的会话设置")
+		}
+		return nil, agent.ConfigureComposer(ctx, r.Session, change)
 	case "models":
 		if models, ok := p.(provider.SessionModelProvider); ok && r.Session != "" {
 			return models.SessionModels(ctx, r.Session)
@@ -347,6 +360,9 @@ func (d *Dispatcher) dispatch(ctx context.Context, r Request) (any, error) {
 	case "interrupt":
 		return nil, p.Interrupt(ctx, r.Session, r.Turn)
 	case "approvals":
+		if scoped, ok := p.(provider.SessionApprovalProvider); ok && r.Session != "" {
+			return scoped.SessionApprovals(ctx, r.Session)
+		}
 		approvals := p.Approvals()
 		if r.Session == "" {
 			return approvals, nil
@@ -383,7 +399,7 @@ func (d *Dispatcher) dispatch(ctx context.Context, r Request) (any, error) {
 // are never cached or transparently retried.
 func ReadOnly(method string) bool {
 	switch method {
-	case "providers", "network", "sessions", "transcript", "approvals", "sync", "models", "turn.status":
+	case "providers", "network", "sessions", "transcript", "approvals", "sync", "models", "composer.settings", "turn.status":
 		return true
 	}
 	return false

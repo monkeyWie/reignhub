@@ -20,22 +20,29 @@ type draftState struct {
 }
 
 type State struct {
-	confirmedRowKeys map[string]string
-	cancelEntry      context.CancelFunc
-	cancelPageRead   context.CancelFunc
-	terminalPanels   map[string]*terminalPanel
-	terminalCache    []*terminalTab
-	composerRef      *core.Ref
-	draftWriter      *draftWriter
-	draftSaveFailed  bool
-	draftLoads       map[string]string
-	restoreSession   Object
-	pinnedRefs       map[string]*core.Ref
-	pinDrag          *pinnedDrag
+	composerControls         []Object
+	composerControlsRevision uint64
+	composerContentRevision  uint64
+	composerControlsModel    string
+	composerWrites           map[string]bool
+	confirmedRowKeys         map[string]string
+	cancelEntry              context.CancelFunc
+	cancelPageRead           context.CancelFunc
+	terminalPanels           map[string]*terminalPanel
+	terminalCache            []*terminalTab
+	composerRef              *core.Ref
+	codexRestart             *sessionCodexRestart
+	draftWriter              *draftWriter
+	draftSaveFailed          bool
+	draftLoads               map[string]string
+	restoreSession           Object
+	pinnedRefs               map[string]*core.Ref
+	pinDrag                  *pinnedDrag
 
 	submittedDraft, submittedDraftSession                   string
 	directoryGeneration                                     uint64
 	mobileSidebarOpen                                       *core.Signal[bool]
+	mobileClient                                            bool
 	clientName                                              string
 	drafts                                                  map[string]draftState
 	expanded                                                map[string]bool
@@ -146,10 +153,12 @@ type State struct {
 
 func newState(cx *core.Scope, api API) *State {
 	identified := &identifiedAPI{API: api}
-	identified.setInfo(platformClientInfo())
+	info := platformClientInfo()
+	identified.setInfo(info)
 	api = identified
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &State{clientName: platformDeviceName(), drafts: map[string]draftState{}, expanded: map[string]bool{}, cx: cx, api: api, ctx: ctx, cancel: cancel, revision: core.NewSignal(cx, 0), width: core.NewSignal(cx, core.Points(1320)), dialog: core.NewSignal(cx, ""), draft: core.NewSignal(cx, ""), sessionWidth: core.NewSignal(cx, core.Points(300)), collapsed: map[string]bool{}, images: map[string][]byte{}, loadingImages: map[string]bool{}, previewIndex: core.NewSignal(cx, 0), prompted: map[string]bool{}, retrying: map[string]time.Time{}}
+	s.mobileClient = isMobile(cx) || info.Kind == "browser" && (info.Platform == "android" || info.Platform == "ios")
 	s.snapshots = newSnapshotWriter(ctx, identified.API, s.historySaved)
 	s.hostAuthorization = core.NewSignal(cx, "")
 	s.loadingMotion = newLoadingMotion(cx)
@@ -434,7 +443,7 @@ func (s *State) selectSession(session Object) {
 		s.changed()
 		return
 	}
-	if s.selected != nil && s.snapshots != nil && s.snapshots.storage != nil {
+	if s.snapshots != nil && s.snapshots.storage != nil {
 		s.prepareSession(session, target)
 		return
 	}
@@ -466,6 +475,8 @@ func (s *State) openSession(session Object, target string, page Object, pageRead
 	s.rebuildMessages()
 	s.approvals = nil
 	s.models = nil
+	s.composerControls = s.loadSessionPermissions(target, str(session, "providerId"), str(session, "id"))
+	s.composerContentRevision++
 	s.model = str(session, "model")
 	s.modelBase = s.model
 	d := s.drafts[s.key()]
@@ -612,9 +623,12 @@ func (s *State) pendingSend() string {
 	s.read()
 	return s.pendingSends[s.key()]
 }
+func (s *State) canWriteSession() bool {
+	return s.selected != nil && s.connected() && !s.codexRecoveryIssue(s.selected)
+}
 func (s *State) canSubmitMessage() bool {
 	s.read()
-	if s.selected == nil || !s.connected() || !s.draftReady() || s.pendingSend() != "" {
+	if !s.canWriteSession() || !s.draftReady() || s.pendingSend() != "" || s.composerWrites[s.key()] {
 		return false
 	}
 	if activeTurn(s.transcript) != nil && !s.agentCapability("steer") {
@@ -634,13 +648,11 @@ func (s *State) canSend() bool {
 	return strings.TrimSpace(s.draft.Get()) != "" || len(s.uploads) > 0
 }
 func (s *State) send(method string) {
-	if s.selected == nil || !s.connected() || !s.draftReady() || s.pendingSend() != "" {
-		return
-	}
-	if method == "interrupt" && !s.agentCapability("interrupt") {
-		return
-	}
-	if method != "interrupt" && !s.canSend() {
+	if method == "interrupt" {
+		if !s.canWriteSession() || !s.draftReady() || s.pendingSend() != "" || !s.agentCapability("interrupt") {
+			return
+		}
+	} else if !s.canSend() {
 		return
 	}
 	body := strings.TrimSpace(s.draft.Get())

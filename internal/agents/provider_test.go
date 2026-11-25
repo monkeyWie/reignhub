@@ -41,6 +41,10 @@ func TestAgentProcessFixture(t *testing.T) {
 		write(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": session, "update": u}})
 	}
 	options := []map[string]any{{"type": "select", "id": "models-choice", "name": "Model", "category": "model", "currentValue": "model/a", "options": []map[string]any{{"value": "model/a", "name": "Model A"}, {"value": "model/b", "name": "Model B"}}}}
+	options = append(options, map[string]any{"type": "select", "id": "trust", "category": "mode", "name": "Permissions", "currentValue": "ask", "options": []map[string]string{{"value": "ask", "name": "Ask"}, {"value": "accept", "name": "Accept edits"}}})
+	effort := map[string]any{"type": "select", "id": "depth", "category": "thought_level", "name": "Thinking", "currentValue": "short", "options": []map[string]string{{"value": "short", "name": "Short"}, {"value": "deep", "name": "Deep"}}}
+	options = append(options, effort)
+	piLevel := "low"
 	reader := bufio.NewScanner(os.Stdin)
 	reader.Buffer(make([]byte, 65536), 32<<20)
 	for reader.Scan() {
@@ -64,9 +68,18 @@ func TestAgentProcessFixture(t *testing.T) {
 			}
 			switch typ {
 			case "get_available_models":
-				reply(map[string]any{"models": []map[string]any{{"provider": "provider/one", "id": "model/two", "name": "Model"}}})
+				reply(map[string]any{"models": []map[string]any{{"provider": "provider/one", "id": "model/two", "name": "Model", "input": []string{"text", "image"}}}})
 			case "get_state":
-				reply(map[string]any{"isStreaming": false})
+				reply(map[string]any{"isStreaming": false, "model": map[string]string{"provider": "provider/one", "id": "model/two"}, "thinkingLevel": piLevel})
+			case "get_available_thinking_levels":
+				reply(map[string]any{"levels": []string{"low", "high"}})
+			case "set_thinking_level":
+				level, ok := params["level"].(string)
+				if !ok || level != "high" {
+					os.Exit(9)
+				}
+				piLevel = level
+				reply(nil)
 			case "get_messages":
 				reply(map[string]any{"messages": []map[string]any{{"role": "user", "content": []map[string]string{{"type": "text", "text": "old question"}}}, {"role": "assistant", "content": []map[string]string{{"type": "text", "text": "old answer"}}}}})
 			case "set_model":
@@ -112,9 +125,18 @@ func TestAgentProcessFixture(t *testing.T) {
 			}
 			reply(map[string]any{"sessions": rows})
 		case "session/set_config_option":
-			var model string
-			_ = json.Unmarshal(params["value"], &model)
-			if model != "model/b" {
+			var id, value string
+			_ = json.Unmarshal(params["configId"], &id)
+			_ = json.Unmarshal(params["value"], &value)
+			switch {
+			case id == "models-choice" && value == "model/b":
+				options[0]["currentValue"] = value
+				options = options[:2] // Model B has no reasoning control.
+			case id == "trust" && value == "accept":
+				options[1]["currentValue"] = value
+			case id == "depth" && value == "deep":
+				effort["currentValue"] = value
+			default:
 				os.Exit(4)
 			}
 			reply(map[string]any{"configOptions": options})
@@ -324,7 +346,7 @@ func TestPiNativeRPC(t *testing.T) {
 		t.Fatal(err)
 	}
 	models, err := p.Models(ctx)
-	if err != nil || len(models) != 1 {
+	if err != nil || len(models) != 1 || !models[0].ImageInput {
 		t.Fatalf("models=%v err=%v", models, err)
 	}
 	if err = p.SendWithModel(ctx, s.ID, "hi", models[0].ID); err != nil {
@@ -432,4 +454,75 @@ func TestExternalAgentHandshake(t *testing.T) {
 		}
 	}
 	t.Logf("%s initialization succeeded; capabilities=%+v", protocol, status.Capabilities)
+}
+
+func TestSessionComposerChoicesByAgentAndModel(t *testing.T) {
+	for _, protocol := range []string{"acp", "pi"} {
+		t.Run(protocol, func(t *testing.T) {
+			p := fixtureProvider(t, protocol, t.TempDir(), false)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			session, err := p.Create(ctx, provider.CreateOptions{CWD: t.TempDir()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			read := func() map[string]string {
+				controls, err := p.ComposerControls(ctx, session.ID, "")
+				if err != nil {
+					t.Fatal(err)
+				}
+				out := map[string]string{}
+				for _, c := range controls {
+					if c.ID == "acp:depth" && c.Kind != "effort" {
+						t.Fatalf("lost reasoning category for %q", c.ID)
+					}
+					out[c.ID] = c.Selected
+				}
+				return out
+			}
+			set := func(id, v, model string) error {
+				return p.ConfigureComposer(ctx, session.ID, provider.ComposerChange{Control: id, Value: v, Model: model})
+			}
+			initial := read()
+			if protocol == "pi" {
+				if len(initial) != 2 || initial["effort"] != "low" {
+					t.Fatal(initial)
+				}
+				if err := set("permission", "full", ""); err == nil {
+					t.Fatal("unsupported Pi permission accepted")
+				}
+				if err := set("effort", "high", "another-model"); err == nil {
+					t.Fatal("stale Pi model accepted")
+				}
+				if err := set("effort", "high", initial["model"]); err != nil {
+					t.Fatal(err)
+				}
+				if read()["effort"] != "high" {
+					t.Fatal("Pi did not apply thinking level")
+				}
+				return
+			}
+			if initial["acp:trust"] != "ask" || initial["acp:depth"] != "short" {
+				t.Fatal(initial)
+			}
+			for _, c := range []provider.ComposerChange{{Control: "acp:trust", Value: "accept"}, {Control: "acp:depth", Value: "deep"}} {
+				if err := p.ConfigureComposer(ctx, session.ID, c); err != nil {
+					t.Fatal(err)
+				}
+				if read()[c.Control] != c.Value {
+					t.Fatal("native option not updated", c)
+				}
+			}
+			if err := set("model", "model/b", "model/a"); err != nil {
+				t.Fatal(err)
+			}
+			after := read()
+			if after["model"] != "model/b" || after["acp:depth"] != "" || after["acp:trust"] != "accept" {
+				t.Fatal(after)
+			}
+			if err := set("acp:depth", "deep", "model/b"); err == nil {
+				t.Fatal("removed reasoning choice accepted")
+			}
+		})
+	}
 }

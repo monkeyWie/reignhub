@@ -35,7 +35,7 @@ func TestDirectoryOwnerTimeoutPreservesMetadataAsUnknown(t *testing.T) {
 	rows := []provider.Session{{ID: "waiting", Title: "Keep this metadata", Status: "idle"}, {ID: "unlocked", Status: "completed"}}
 	started := time.Now()
 	p.enrichSessionActivity(ctx, rows)
-	if time.Since(started) > time.Second || rows[0].Title != "Keep this metadata" || rows[0].Status != "unknown" || rows[1].Status != "completed" {
+	if time.Since(started) > time.Second || rows[0].Title != "Keep this metadata" || rows[0].Status != "unknown" || rows[0].CodexOwnerUnreachable || f.b.needsSharedDesktop() || rows[1].Status != "completed" {
 		t.Fatal("slow owner blocked or falsified directory state", rows)
 	}
 }

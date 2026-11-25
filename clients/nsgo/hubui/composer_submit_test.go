@@ -71,6 +71,51 @@ func TestComposerReturnClearsWithoutReplacingEditor(t *testing.T) {
 	}
 }
 
+func TestUnreachableOwnerPreservesDraftUntilExplicitSendAfterRecovery(t *testing.T) {
+	f := &retryMessageAPI{demoAPI: newDemoAPI(), requests: make(chan retryRequest, 4)}
+	row := Object{"id": "demo-chat", "providerId": "codex-app"}
+	unreachable := copyObject(row)
+	unreachable["codexOwnerUnreachable"] = true
+	turns := []Object{{"id": "active", "status": "inProgress"}}
+	var s *State
+	app := nsgotest.Start(t, func(cx *core.Scope) core.Node {
+		cx.SetTheme(core.DefaultTheme())
+		s = newState(cx, f)
+		s.selected, s.target = row, "demo-device"
+		s.devices = []Object{{"id": s.target, "connected": true}}
+		s.providers = []Object{{"id": "codex-app", "capabilities": Object{"steer": true, "interrupt": true}}}
+		s.applyCataloguePage("codex-app", []Object{unreachable}, true)
+		// Stale history must neither clear nor later revive the directory warning.
+		s.setTranscript(Object{"session": row, "turns": turns})
+		return s.conversation(cx, true)
+	}, nsgotest.Size(1000, 844), nsgotest.Environment(core.Environment{OS: core.OSMacOS, Idiom: core.IdiomDesktop}))
+	editorID := app.Find("id:chat-input").ID
+	const draft = "再检查一下这个问题"
+	app.Type("id:chat-input", draft)
+	app.Submit("id:chat-input")
+	if !app.Find("id:send-message").Props.Disabled || !app.Find("id:interrupt-generation").Props.Disabled {
+		t.Fatal("unreachable owner still offered a write")
+	}
+	if editor := app.Find("id:chat-input"); editor.Props.Disabled || editor.Text != draft || editor.ID != editorID {
+		t.Fatalf("ownership failure left editor %d (original %d), disabled=%v, text=%q", editor.ID, editorID, editor.Props.Disabled, editor.Text)
+	}
+	app.Post(func() {
+		s.applyCataloguePage("codex-app", []Object{row}, true)
+		s.setTranscript(Object{"session": unreachable, "turns": turns})
+	})
+	app.WaitUntil(time.Second, func() bool { return !app.Find("id:send-message").Props.Disabled })
+	if len(f.requests) != 0 || app.Find("id:chat-input").Text != draft || app.Find("id:interrupt-generation").Props.Disabled {
+		t.Fatal("recovery consumed the draft or kept the session blocked")
+	}
+	app.Press("id:send-message")
+	app.WaitUntil(time.Second, func() bool { return len(f.requests) == 1 })
+	request := <-f.requests
+	if str(request.params, "method") != "steer" || str(request.params, "text") != draft {
+		t.Fatalf("recovery submitted the wrong operation: %v", request.params)
+	}
+	request.result <- nil
+}
+
 // Replay an editor's late change notification after submission. Delivery and
 // navigation may complete independently of the native text callback.
 func TestSubmittedDraftEchoDoesNotRestoreOrEraseNewInput(t *testing.T) {

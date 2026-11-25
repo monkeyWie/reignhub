@@ -1,6 +1,9 @@
 package hubui
 
-import "github.com/nsgo-dev/nsgo/core"
+import (
+	"github.com/nsgo-dev/nsgo/core"
+	"github.com/nsgo-dev/nsgo/ui"
+)
 
 type colorScheme struct {
 	canvas, sidebar, page, elevated, muted, selected, border, text, secondary, brand, brandText, code uint32
@@ -48,8 +51,31 @@ func schemePalette(c colorScheme, p core.Palette) core.Palette {
 	return p
 }
 
-// Raw inputs need explicit caret/selection colors to avoid platform blue defaults.
-// Shared ui.Input fields inherit the neutral caret and themed selection.
+// NSGo uses the editor's palette accent for its field caret and for macOS
+// input-method marks. Scope the override so links and selections keep their colors.
+func useEditorTheme(cx *core.Scope) {
+	theme := *cx.Theme()
+	theme.Light.Accent = theme.Light.Text
+	theme.Dark.Accent = theme.Dark.Text
+	cx.SetTheme(&theme)
+}
+
+type formInput ui.Input
+
+func (in formInput) Render(cx *core.Scope) core.Node {
+	useEditorTheme(cx)
+	in.AutoCapitalize = core.AutoCapitalizeNone
+	return ui.Input(in)
+}
+
+type editorInput core.Input
+
+func (in editorInput) Render(cx *core.Scope) core.Node {
+	useEditorTheme(cx)
+	in.AutoCapitalize = core.AutoCapitalizeNone
+	return core.Input(in)
+}
+
 func textInputStyle(cx *core.Scope) core.Style {
 	p := cx.Palette()
 	return core.Style{Color: p.Text, PlaceholderColor: p.TextMuted, CaretColor: p.Text, SelectionColor: p.Selection}

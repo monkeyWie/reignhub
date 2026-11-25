@@ -4,17 +4,125 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/monkeyWie/reignhub/internal/codexipc"
 	"github.com/monkeyWie/reignhub/internal/config"
+	"github.com/monkeyWie/reignhub/internal/control"
 	"github.com/monkeyWie/reignhub/internal/events"
 	"github.com/monkeyWie/reignhub/internal/provider"
 	"github.com/monkeyWie/reignhub/internal/rpc"
 )
+
+func TestSharedBackendQuestionThroughDispatcher(t *testing.T) {
+	for _, status := range []string{"inProgress", "completed"} {
+		t.Run(status, func(t *testing.T) {
+			p := New(config.Config{DataDir: t.TempDir()}, "", events.New())
+			desktop := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_ = json.NewEncoder(w).Encode(desktopState{Ready: true})
+			}))
+			t.Cleanup(desktop.Close)
+			p.shared = &sharedConnection{
+				sharedEndpoint: sharedEndpoint{Control: strings.TrimPrefix(desktop.URL, "https://")},
+				http:           desktop.Client(),
+			}
+			var expired, reject, unavailable atomic.Bool
+			var writes atomic.Int32
+			backendFixture(t, p, func(m rpc.Message) (any, *rpc.Error) {
+				params := decodeObject(m.Params)
+				switch m.Method {
+				case "thread/turns/list":
+					if number := params["limit"]; number != float64(1) || params["itemsView"] != "full" {
+						t.Errorf("unexpected approval read: %s", m.Params)
+					}
+					if unavailable.Load() {
+						return nil, &rpc.Error{Code: -32000, Message: "fixture read failure"}
+					}
+					if expired.Load() || params["threadId"] != "session" {
+						return rawJSON(map[string]any{"data": []any{map[string]any{"id": "next", "status": "inProgress", "items": []any{}}}}), nil
+					}
+					turn := object(array(questionState()["turns"])[0])
+					turn["status"] = status
+					return map[string]any{"data": []any{turn}}, nil
+				case "turn/steer", "turn/start":
+					writes.Add(1)
+					wantSteer := status == "inProgress"
+					if params["threadId"] != "session" || wantSteer != (m.Method == "turn/steer") ||
+						wantSteer && params["expectedTurnId"] != "turn" {
+						t.Errorf("answer routed to %s with %s", m.Method, m.Params)
+					}
+					text := stringValue(object(array(params["input"])[0])["text"])
+					if !strings.HasPrefix(text, questionReplyOpen) || !strings.HasSuffix(text, questionReplyClose) {
+						t.Errorf("missing structured reply envelope: %q", text)
+					}
+					var replies []asyncQuestionReply
+					err := json.Unmarshal([]byte(strings.TrimSuffix(strings.TrimPrefix(text, questionReplyOpen), questionReplyClose)), &replies)
+					want := []asyncQuestionReply{{`["request_user_input_async","call",0]`, "Pick a scope", "Local"}}
+					if err != nil || !reflect.DeepEqual(replies, want) {
+						t.Errorf("wrong answers: %v %v", replies, err)
+					}
+					if reject.Load() {
+						return nil, &rpc.Error{Code: -32602, Message: "fixture rejection"}
+					}
+					return map[string]any{}, nil
+				default:
+					t.Errorf("unexpected method: %s", m.Method)
+					return nil, &rpc.Error{Code: -32601, Message: "unexpected method"}
+				}
+			})
+			dispatcher := control.Dispatcher{Providers: map[string]provider.Provider{"codex": p}}
+			read := func(session string) []provider.Approval {
+				t.Helper()
+				out := dispatcher.Handle(t.Context(), control.Request{Method: "approvals", Provider: "codex", Session: session})
+				var approvals []provider.Approval
+				if err := json.Unmarshal(out.Result, &approvals); out.Error != "" || err != nil {
+					t.Fatalf("approvals response %v: %v", out, err)
+				}
+				return approvals
+			}
+			approvals := read("session")
+			if len(approvals) != 1 || len(approvals[0].Questions) != 2 || !approvals[0].AllowSkip ||
+				len(approvals[0].Questions[0].Options) != 2 || approvals[0].Questions[0].Options[0].Label != "Local" {
+				t.Fatalf("question card data missing: %+v", approvals)
+			}
+			a := approvals[0]
+			if len(read("other")) != 0 {
+				t.Fatal("question leaked into another session")
+			}
+			unavailable.Store(true)
+			if pending := read("session"); len(pending) != 1 || pending[0].ID != a.ID {
+				t.Fatal("failed refresh discarded the existing question")
+			}
+			unavailable.Store(false)
+			decide := control.Request{Method: "decide", Provider: "codex", Session: "session",
+				Approval: a.ID, Decision: questionAnswer(a.Questions[0].ID, "Local")}
+			reject.Store(true)
+			if out := dispatcher.Handle(t.Context(), decide); out.Error == "" {
+				t.Fatal("explicit rejection was not returned")
+			}
+			if pending := read("session"); len(pending) != 1 || pending[0].ID != a.ID {
+				t.Fatal("explicit rejection discarded the form")
+			}
+			reject.Store(false)
+			if out := dispatcher.Handle(t.Context(), decide); out.Error != "" || writes.Load() != 2 {
+				t.Fatalf("retry failed: %v (writes=%d)", out, writes.Load())
+			}
+			if len(read("session")) != 0 || dispatcher.Handle(t.Context(), decide).Error == "" || writes.Load() != 2 {
+				t.Fatal("accepted question reappeared or could be submitted again")
+			}
+			expired.Store(true)
+			if len(read("session")) != 0 {
+				t.Fatal("a newer turn revived the old question")
+			}
+		})
+	}
+}
 
 func questionState() map[string]any {
 	return decodeObject(json.RawMessage(`{"id":"session","cwd":"/fixture","turns":[{"id":"turn","status":"inProgress","items":[{"type":"agentMessage","id":"call","text":"","questions":[{"title":"Pick a scope","options":["Local","Remote"]},{"title":"Any constraints?"}]}]}]}`))

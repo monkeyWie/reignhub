@@ -145,12 +145,18 @@ func (p *Provider) observeIPCState(id, owner string, oldRaw json.RawMessage, nex
 	log := p.stream().log
 	if len(oldRaw) == 0 {
 		log.Publish(provider.StreamEvent{Kind: "snapshot", SessionID: id})
+		if next["currentPermissions"] != nil || next["latestThreadSettings"] != nil || next["latestReasoningEffort"] != nil {
+			log.Publish(provider.StreamEvent{Kind: "composerSettings", SessionID: id})
+		}
 	} else {
 		priorState := decodeObject(oldRaw)
 		// Settings can change without a turn/item event. Wake the existing
 		// snapshot path so controllers receive the new session model as well.
 		if stringValue(priorState["latestModel"]) != stringValue(next["latestModel"]) {
 			log.Publish(provider.StreamEvent{Kind: "snapshot", SessionID: id})
+		}
+		if !reflect.DeepEqual(priorState["currentPermissions"], next["currentPermissions"]) || !reflect.DeepEqual(priorState["latestThreadSettings"], next["latestThreadSettings"]) || stringValue(priorState["latestReasoningEffort"]) != stringValue(next["latestReasoningEffort"]) {
+			log.Publish(provider.StreamEvent{Kind: "composerSettings", SessionID: id})
 		}
 		previous, _, _ := stateTurns(priorState)
 		oldTurns := map[string]map[string]any{}
@@ -432,6 +438,7 @@ func (b *appIPC) register(id string, result json.RawMessage, created bool) {
 		metadata["updatedAt"] = metadata["createdAt"]
 	}
 	b.mu.Lock()
+	delete(b.unreachableOwners, id)
 	if b.owned[id] == nil {
 		b.owned[id] = &ownedThread{pubMu: make(chan struct{}, 1), metadata: metadata, settings: response, followers: map[string]bool{}, loaded: created, turns: []map[string]any{}, announced: !created, sent: map[string]bool{}}
 	}
@@ -740,7 +747,7 @@ func (b *appIPC) ownerState(id string, o *ownedThread) map[string]any {
 func (b *appIPC) observe(m rpc.Message) {
 	var v struct {
 		ThreadID, TurnID, ItemID, Delta string
-		Turn, Item                      map[string]any
+		Turn, Item, ThreadSettings      map[string]any
 		Name                            string
 		SummaryIndex                    int
 	}
@@ -759,6 +766,11 @@ func (b *appIPC) observe(m rpc.Message) {
 		return
 	}
 	o.version++
+	if m.Method == "thread/settings/updated" && v.ThreadSettings != nil {
+		o.settings["threadSettings"] = v.ThreadSettings
+		o.settings["model"] = v.ThreadSettings["model"]
+		o.settings["reasoningEffort"] = v.ThreadSettings["effort"]
+	}
 	if m.Method == "thread/name/updated" {
 		o.metadata["name"] = v.Name
 	}

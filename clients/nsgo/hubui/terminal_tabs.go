@@ -1,4 +1,4 @@
-//go:build (darwin && !ios) || windows || (linux && !android)
+//go:build darwin || windows || (linux && !android) || (js && wasm && !nsgominiprogram && !nsgoharmony)
 
 package hubui
 
@@ -121,7 +121,7 @@ func (s *State) terminalTabButton(cx *core.Scope, p *terminalPanel, tab *termina
 			if selected.Get() {
 				return core.Style{Background: c.muted, BorderColor: c.border}
 			}
-			return core.Style{BorderColor: core.Transparent, Hover: &core.Style{Background: c.muted}}
+			return core.Style{BorderColor: core.Transparent, Hover: &core.Style{BorderColor: c.border}}
 		}, Children: []core.Node{t, core.Show{When: func() bool { s.read(); return tab.closing }, Then: func(cx *core.Scope) core.Node {
 			return s.loadingRing("terminal-closing-"+n, msgs.TerminateTerminal(), 12)
 		}, Else: func(*core.Scope) core.Node { return close }}}}

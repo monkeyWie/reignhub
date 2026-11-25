@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/monkeyWie/reignhub/pkg/appdb"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -28,27 +29,29 @@ type pending struct {
 	hidden           bool
 }
 type Provider struct {
-	assets          *assets.Store
-	cfg             config.Config
-	broker          *events.Broker
-	mu              sync.Mutex
-	client          *rpc.Client
-	created         map[string]*rpc.Client
-	endpoint        string
-	ipc             *appIPC
-	lastError       string
-	pending         map[string]pending
-	next            uint64
-	connectMu       sync.Mutex
-	observeMu       sync.Mutex
-	shared          *sharedServer
-	retired         *rpc.Client
-	live            *liveStream
-	projectMu       sync.Mutex
-	projectsAt      time.Time
-	projects        *projectIndex
-	recencies       map[string]sessionRecencyEntry
-	recencySequence uint64
+	composerSettings map[string]codexSettings
+	assets           *assets.Store
+	cfg              config.Config
+	broker           *events.Broker
+	mu               sync.Mutex
+	client           *rpc.Client
+	created          map[string]*rpc.Client
+	endpoint         string
+	ipc              *appIPC
+	lastError        string
+	pending          map[string]pending
+	next             uint64
+	connectMu        sync.Mutex
+	observeMu        sync.Mutex
+	questionReads    sync.Map
+	shared           *sharedConnection
+	retired          *rpc.Client
+	live             *liveStream
+	projectMu        sync.Mutex
+	projectsAt       time.Time
+	projects         *projectIndex
+	recencies        map[string]sessionRecencyEntry
+	recencySequence  uint64
 }
 
 func New(c config.Config, _ string, b *events.Broker, stores ...*assets.Store) *Provider {
@@ -75,10 +78,11 @@ func (p *Provider) Close() error {
 	p.client = nil
 	p.ipc = nil
 	p.created = nil
+	p.composerSettings = nil
 	p.pending = map[string]pending{}
 	p.mu.Unlock()
 	if shared != nil {
-		shared.close()
+		shared.http.CloseIdleConnections()
 	}
 	if retired != nil {
 		_ = retired.Close()
@@ -103,7 +107,7 @@ func (p *Provider) Status(ctx context.Context) provider.Status {
 	p.mu.Lock()
 	c, b, last, shared := p.client, p.ipc, p.lastError, p.shared
 	p.mu.Unlock()
-	s := provider.Status{ID: "codex-app", Name: "Codex", State: "unavailable", Installed: app != "" || cli != "", Running: len(instances) > 0, InstallPath: app, Instances: instances, LastError: last, Capabilities: provider.Capabilities{SessionRemoval: "archive", Streaming: true, History: true, Create: true, Send: true, Steer: true, Interrupt: true, Approvals: true, Desktop: true, ImageInput: true, FileInput: true}}
+	s := provider.Status{ID: "codex-app", Name: "Codex", State: "unavailable", Installed: app != "" || cli != "", Running: len(instances) > 0, InstallPath: app, Instances: instances, LastError: last, Capabilities: provider.Capabilities{ComposerSettings: true, SessionRemoval: "archive", Streaming: true, History: true, Create: true, Send: true, Steer: true, Interrupt: true, Approvals: true, Desktop: true, ImageInput: true, FileInput: true}}
 	if appErr != nil {
 		s.LastError = appErr.Error()
 	}
@@ -125,8 +129,13 @@ func (p *Provider) Status(ctx context.Context) provider.Status {
 	}
 	if shared != nil {
 		s.Endpoint = "websocket"
-		if c != nil && c.Alive() && shared.connected() {
-			s.State, s.Detail, s.DesktopClients = "connected", "已就绪", 1
+		if shared.connected(ctx) {
+			s.DesktopClients = 1
+			if c != nil && c.Alive() {
+				s.State, s.Detail = "connected", "已就绪"
+			} else {
+				s.State, s.Detail = "detected", "正在重新连接共享 Codex 后端"
+			}
 		} else {
 			s.State, s.Detail = "launch-required", "请通过 ReignHub 启动 Codex"
 		}
@@ -176,6 +185,9 @@ func (p *Provider) session(t thread) provider.Session {
 	s.Project = p.sessionProject(t)
 	// Keep the existing identity for pins, preferences and attachment scopes.
 	s.ProviderID = "codex-app"
+	if b := p.appBridge(); b != nil {
+		s.CodexOwnerUnreachable = b.ownerUnreachable(t.ID)
+	}
 	return s
 }
 
@@ -306,8 +318,8 @@ func (p *Provider) Transcript(ctx context.Context, id, cursor string) (provider.
 	if err := p.call(ctx, "thread/turns/list", params, &turns); err != nil {
 		// Codex does not materialize a new thread's history until its first
 		// user message. Metadata remains readable in the creating connection.
-		var rpcErr *rpc.Error
-		if cursor != "" || !p.isCreatedThread(id) || !errors.As(err, &rpcErr) || rpcErr.Code != -32600 || !strings.Contains(rpcErr.Message, "is not materialized yet") {
+		knownEmpty := p.isCreatedThread(id) || p.sharedBackend() != nil && metadata.Thread.ID == id && metadata.Thread.Status.Type == "idle"
+		if cursor != "" || !knownEmpty || !unmaterializedTurns(err, id) {
 			return provider.Transcript{}, err
 		}
 	}
@@ -502,12 +514,22 @@ func (p *Provider) Create(ctx context.Context, o provider.CreateOptions) (provid
 	if o.Model != "" {
 		params["model"] = o.Model
 	}
-	var out struct{ Thread thread }
+	var out struct {
+		Thread thread
+		codexSettings
+	}
 	p.mu.Lock()
 	c := p.client
 	p.mu.Unlock()
 	if c == nil || !c.Alive() {
 		return provider.Session{}, provider.ErrUnavailable
+	}
+	selection, err := readDesktopPermission(ctx, codexProjectHome())
+	if err != nil {
+		return provider.Session{}, fmt.Errorf("无法读取被控端 Codex 的默认权限: %w", err)
+	}
+	if err := selection.apply(params); err != nil {
+		return provider.Session{}, err
 	}
 	var createdRaw json.RawMessage
 	if err := p.threadWrite(ctx, c, "thread/start", params, &createdRaw); err != nil {
@@ -525,6 +547,7 @@ func (p *Provider) Create(ctx context.Context, o provider.CreateOptions) (provid
 			p.created = make(map[string]*rpc.Client)
 		}
 		p.created[out.Thread.ID] = c
+		p.rememberComposerSettingsLocked(out.Thread.ID, out.codexSettings)
 	}
 	p.mu.Unlock()
 	if b := p.appBridge(); b != nil {
@@ -540,9 +563,15 @@ func (p *Provider) isCreatedThread(id string) bool {
 	defer p.mu.Unlock()
 	return p.client != nil && p.created[id] == p.client && p.client.Alive()
 }
+func unmaterializedTurns(err error, id string) bool {
+	var e *rpc.Error
+	return errors.As(err, &e) && e.Code == -32600 && e.Message == "thread "+id+" is not materialized yet; thread/turns/list is unavailable before first user message"
+}
+
 func (p *Provider) threadClient(ctx context.Context, id string) (*rpc.Client, error) {
 	p.mu.Lock()
 	c := p.client
+	shared := p.shared != nil
 	created := c != nil && p.created[id] == c
 	p.mu.Unlock()
 	if c == nil || !c.Alive() {
@@ -551,12 +580,29 @@ func (p *Provider) threadClient(ctx context.Context, id string) (*rpc.Client, er
 	if !created {
 		var resumed json.RawMessage
 		if err := c.Call(ctx, "thread/resume", map[string]any{"threadId": id, "excludeTurns": true}, &resumed); err != nil {
+			var rejection *rpc.Error
+			if shared && errors.As(err, &rejection) && rejection.Code == -32600 && rejection.Message == "no rollout found for thread id "+id {
+				// A fresh shared thread may exist in memory before it has a rollout.
+				// Only the same live server can confirm that exact empty thread.
+				var meta struct{ Thread thread }
+				if c.Call(ctx, "thread/read", map[string]any{"threadId": id}, &meta) == nil && meta.Thread.ID == id && meta.Thread.Status.Type == "idle" {
+					readErr := c.Call(ctx, "thread/turns/list", map[string]any{"threadId": id, "limit": 1, "itemsView": "notLoaded"}, nil)
+					if unmaterializedTurns(readErr, id) {
+						return c, nil
+					}
+				}
+			}
 			return nil, fmt.Errorf("无法接续原会话（不会另建会话）: %w", err)
 		}
 		p.mu.Lock()
 		if p.client != c {
 			p.mu.Unlock()
 			return nil, provider.ErrUnavailable
+		}
+		var settings codexSettings
+		gotSettings := json.Unmarshal(resumed, &settings) == nil
+		if gotSettings {
+			p.rememberComposerSettingsLocked(id, settings)
 		}
 		b := p.ipc
 		if b != nil || p.shared != nil {
@@ -566,6 +612,9 @@ func (p *Provider) threadClient(ctx context.Context, id string) (*rpc.Client, er
 			p.created[id] = c
 		}
 		p.mu.Unlock()
+		if gotSettings {
+			p.stream().log.Publish(provider.StreamEvent{Kind: "composerSettings", SessionID: id})
+		}
 		if b != nil {
 			b.register(id, resumed, false)
 		}
@@ -584,14 +633,34 @@ func (p *Provider) SendWithModel(ctx context.Context, id, text, model string) er
 }
 
 func (p *Provider) Models(ctx context.Context) ([]provider.Model, error) {
-	models := []provider.Model{}
+	catalogue, err := p.modelCatalogue(ctx)
+	if err != nil {
+		return nil, err
+	}
+	models := make([]provider.Model, 0, len(catalogue))
+	for _, m := range catalogue {
+		models = append(models, m.Model)
+	}
+	return models, nil
+}
+
+type listedModel struct {
+	provider.Model
+	Efforts       []provider.ComposerChoice
+	DefaultEffort string
+}
+
+func (p *Provider) modelCatalogue(ctx context.Context) ([]listedModel, error) {
+	var models []listedModel
 	cursor := ""
 	seen := map[string]bool{}
 	for {
 		var page struct {
 			Data []struct {
-				Model, DisplayName string
-				IsDefault, Hidden  bool
+				Model, DisplayName, DefaultReasoningEffort string
+				InputModalities                            []string
+				SupportedReasoningEfforts                  []struct{ ReasoningEffort, Description string }
+				IsDefault, Hidden                          bool
 			}
 			NextCursor string
 		}
@@ -604,7 +673,13 @@ func (p *Provider) Models(ctx context.Context) ([]provider.Model, error) {
 		}
 		for _, m := range page.Data {
 			if !m.Hidden && m.Model != "" {
-				models = append(models, provider.Model{ID: m.Model, Name: m.DisplayName, Default: m.IsDefault})
+				row := listedModel{Model: provider.Model{ID: m.Model, Name: m.DisplayName, Default: m.IsDefault, ImageInput: slices.Contains(m.InputModalities, "image")}, DefaultEffort: m.DefaultReasoningEffort}
+				for _, effort := range m.SupportedReasoningEfforts {
+					if effort.ReasoningEffort != "" {
+						row.Efforts = append(row.Efforts, provider.ComposerChoice{ID: effort.ReasoningEffort, Label: effort.ReasoningEffort, Description: effort.Description})
+					}
+				}
+				models = append(models, row)
 			}
 		}
 		if page.NextCursor == "" {
@@ -636,11 +711,15 @@ func (p *Provider) Interrupt(ctx context.Context, id, turn string) error {
 	return p.threadWrite(ctx, c, "turn/interrupt", map[string]string{"threadId": id, "turnId": turn}, nil)
 }
 func (p *Provider) Approvals() []provider.Approval {
+	return p.approvals("")
+}
+
+func (p *Provider) approvals(session string) []provider.Approval {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	out := []provider.Approval{}
 	for _, a := range p.pending {
-		if !a.hidden {
+		if !a.hidden && (session == "" || a.approval.SessionID == session) {
 			out = append(out, a.approval)
 		}
 	}
@@ -659,18 +738,23 @@ func (p *Provider) addPending(m rpc.Message, reply func(context.Context, any) er
 			}
 		}
 	}
-	p.next++
-	id := fmt.Sprint(p.next)
-	a := provider.Approval{ID: id, ProviderID: "codex", SessionID: meta.ThreadID, TurnID: meta.TurnID, Method: m.Method, Params: m.Params, CreatedAt: time.Now()}
+	a := provider.Approval{ProviderID: "codex", SessionID: meta.ThreadID, TurnID: meta.TurnID, Method: m.Method, Params: m.Params, CreatedAt: time.Now()}
 	if m.Method == "item/tool/requestUserInput" || m.Method == asyncQuestionMethod {
 		var input struct{ Questions []provider.Question }
 		_ = json.Unmarshal(m.Params, &input)
 		a.Questions, a.AllowSkip = input.Questions, m.Method == asyncQuestionMethod
 	}
-	p.pending[id] = pending{approval: a, reply: reply, route: route, requestID: string(m.ID)}
+	a = p.addPendingLocked(a, reply, route, string(m.ID))
 	p.mu.Unlock()
 	p.broker.Publish("codex", "approval", a)
-	return id
+	return a.ID
+}
+
+func (p *Provider) addPendingLocked(a provider.Approval, reply func(context.Context, any) error, route, requestID string) provider.Approval {
+	p.next++
+	a.ID = fmt.Sprint(p.next)
+	p.pending[a.ID] = pending{approval: a, reply: reply, route: route, requestID: requestID}
+	return a
 }
 func (p *Provider) removePending(id string) { p.mu.Lock(); delete(p.pending, id); p.mu.Unlock() }
 func (p *Provider) Decide(ctx context.Context, id string, d provider.Decision) error {
@@ -723,7 +807,7 @@ func (p *Provider) Decide(ctx context.Context, id string, d provider.Decision) e
 		// Keep a tombstone after an uncertain write: another snapshot must not
 		// recreate a submit button while the owner's acknowledgement is pending.
 		var uncertain interface{ OutcomeUnknown() bool }
-		if strings.HasPrefix(a.route, "ipc:") && !(errors.As(err, &uncertain) && uncertain.OutcomeUnknown()) {
+		if a.route != "service" && !(errors.As(err, &uncertain) && uncertain.OutcomeUnknown()) {
 			p.mu.Lock()
 			if current, exists := p.pending[id]; exists {
 				current.claimed = false
@@ -759,11 +843,24 @@ func (p *Provider) observe(m rpc.Message, reply func(context.Context, any) error
 	if len(m.ID) > 0 {
 		p.addPending(m, reply, "service")
 	} else {
+		if m.Method == "thread/settings/updated" {
+			var notice struct {
+				ThreadID       string
+				ThreadSettings codexSettings
+			}
+			if json.Unmarshal(m.Params, &notice) == nil && notice.ThreadID != "" {
+				p.mu.Lock()
+				p.rememberComposerSettingsLocked(notice.ThreadID, notice.ThreadSettings)
+				p.mu.Unlock()
+				p.stream().log.Publish(provider.StreamEvent{Kind: "composerSettings", SessionID: notice.ThreadID})
+			}
+		}
 		if m.Method == "thread/closed" {
 			var closed struct{ ThreadID string }
 			if json.Unmarshal(m.Params, &closed) == nil {
 				p.mu.Lock()
 				delete(p.created, closed.ThreadID)
+				delete(p.composerSettings, closed.ThreadID)
 				p.mu.Unlock()
 			}
 		}
@@ -783,7 +880,7 @@ func (p *Provider) clearRoute(route string) {
 		p.live.mu.Unlock()
 	}
 	for id, a := range p.pending {
-		if a.route == route {
+		if a.route == route || route == "service" && a.route == serverQuestionRoute {
 			delete(p.pending, id)
 		}
 	}
@@ -804,8 +901,8 @@ func (p *Provider) resolvePending(route string, m rpc.Message) {
 	defer p.mu.Unlock()
 	for id, a := range p.pending {
 		resolved := m.Method == "serverRequest/resolved" && a.route == route && a.requestID == string(meta.RequestID)
-		completed := m.Method == "turn/completed" && meta.Turn.ID != "" && a.approval.SessionID == meta.ThreadID && a.approval.TurnID == meta.Turn.ID
-		closed := m.Method == "thread/closed" && a.route == route && a.approval.SessionID == meta.ThreadID
+		completed := m.Method == "turn/completed" && meta.Turn.ID != "" && a.approval.SessionID == meta.ThreadID && a.approval.TurnID == meta.Turn.ID && a.approval.Method != asyncQuestionMethod
+		closed := m.Method == "thread/closed" && (a.route == route || route == "service" && a.route == serverQuestionRoute) && a.approval.SessionID == meta.ThreadID
 		if resolved || completed || closed {
 			delete(p.pending, id)
 		}

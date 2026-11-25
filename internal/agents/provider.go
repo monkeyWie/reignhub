@@ -25,6 +25,8 @@ import (
 )
 
 type runtimeAgent interface {
+	controls(context.Context, string) ([]provider.ComposerControl, error)
+	configure(context.Context, provider.ComposerChange) error
 	Open(context.Context, string, string) (string, error)
 	Prompt(context.Context, string, []provider.Attachment, []string, string) error
 	Cancel(context.Context) error
@@ -36,21 +38,22 @@ type runtimeAgent interface {
 }
 type session struct {
 	provider.Transcript
-	NativeID  string `json:"nativeId"`
-	Imported  bool   `json:"imported,omitempty"`
-	runtimeMu sync.Mutex
-	persisted bool
-	revision  string
-	start     int
-	replace   bool
-	dirty     map[int]map[int]bool
-	timer     *time.Timer
-	runtime   runtimeAgent
-	opening   bool
-	sending   bool
-	removing  bool
-	turn      string
-	assistant string
+	NativeID    string `json:"nativeId"`
+	Imported    bool   `json:"imported,omitempty"`
+	runtimeMu   sync.Mutex
+	persisted   bool
+	revision    string
+	start       int
+	replace     bool
+	dirty       map[int]map[int]bool
+	timer       *time.Timer
+	runtime     runtimeAgent
+	opening     bool
+	configuring bool
+	sending     bool
+	removing    bool
+	turn        string
+	assistant   string
 }
 type sessionRef struct {
 	Session  provider.Session `json:"session"`
@@ -450,6 +453,10 @@ func (p *Provider) SendAttachments(ctx context.Context, id, text, model string, 
 	if p.removed[id] || s.removing {
 		p.mu.Unlock()
 		return errors.New("会话已移除")
+	}
+	if s.configuring {
+		p.mu.Unlock()
+		return errors.New("正在更新会话设置")
 	}
 	if s.sending {
 		p.mu.Unlock()

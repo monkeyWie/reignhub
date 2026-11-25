@@ -28,6 +28,7 @@ already be available. Mobile/browser clients remain remote controllers.
 
 ## Runtime paths
 
+- New threads inherit the controlled host's local desktop permission selection at creation. The host reads the active account's persisted selection from the desktop state store and supplies it to `thread/start`. With server defaults or custom configured permissions, Codex resolves the workspace configuration. Subsequent sends use the thread's effective policy. For unloaded threads without a live permission snapshot, the selected thread's read-only state index can identify full access or restricted access with on-request approval. Restricted policies without reviewer metadata have no preselected preset. On writable Codex sessions, permission changes are available during an active turn with the same confirmation for full access. An IPC follower prefers the current owner's permission snapshot over older thread settings.
 - Existing Codex-owned sessions: discover the local IPC owner and follow its snapshots/patches. Send, append, stop and approval operations go to that owner.
 - Reads and new sessions: use the private app-server where required. ReignHub-owned sessions publish follower state to the App. Shutting down this executor can interrupt its tasks; lock release does not guarantee seamless continuation in the App.
 - Creation source, current owner and IPC schema version are separate facts. An owner lookup timeout is a definite pre-submit failure if the thread is held. For an unlocked thread, the official server can resume the same ID and must acquire its own writer lock before any turn is sent. An uncertain write is never replayed through a different backend.
@@ -83,17 +84,23 @@ session-scoped `approvals` / `decide` endpoint calls. Synchronous
 descriptions and secret-input hints; their answers use the native RPC response or
 `thread-follower-submit-user-input` with `response.answers`.
 
-For asynchronous questions, the App attaches
+For asynchronous questions, Codex attaches
 `{ title, options?: string[] }[]` to `agentMessage.questions`. IDs are serialized
 `["request_user_input_async", itemID, index]`. The adapter projects unanswered
 questions from the latest in-progress/completed turn into optional forms. An
 accepted user/steering reply resolves the matching IDs; unacknowledged steering
 does not. A newer turn expires old prompts.
 
+IPC followers read questions from the owning App state. On the shared
+WebSocket backend a question item signals the controller to refresh approvals.
+The scoped approval read requests only the latest turn, coalesces duplicate
+reads for the same session and retains existing requests if the read fails.
+
 Async submissions serialize `[{ questionItemId, question, answer }]` inside
 `<send_user_message_question_reply>` and its closing tag. They use the captured
-owner's ordinary steer/new-turn route, with normalized text input and composer
-restore context. Recheck the owner and question set before writing. Skip dismisses
+owner's ordinary steer/new-turn route with normalized text input. IPC also
+supplies composer restore context. The shared backend rechecks the latest
+question set and uses the captured WebSocket connection for submission. Skip dismisses
 the form in ReignHub's Provider lifetime and sends no Agent message; omitted
 answers in a partial submission are also dismissed. This dismissal is not a
 persisted Codex App preference and can reappear after a Provider restart.
@@ -158,6 +165,18 @@ for input/approval. `TestDirectoryUsesLiveAppOwnerWithoutOpeningConversation`
 uses isolated IPC and real temporary OS locks to cover active/completed state
 without operating real Agent conversations.
 
+When the broker answers but cannot reach a locked thread's owner, directory
+and selected-session reads retry owner discovery once within their existing
+budget. If both attempts fail and the writer is still held, the session carries
+`codexOwnerUnreachable` in its directory and history metadata. Its watch/probe
+reports a read failure. A rejected write can also establish this state before
+submission. The host retains up to 128 affected session IDs and exposes the
+desktop restart action while any remain. A fresh owner snapshot, observed lock
+release or adoption by the local executor clears that session's warning.
+The shared WebSocket route tracks its desktop handshake independently and
+requires a connected desktop for a recovery probe. These fields travel inside
+the encrypted controller RPC.
+
 A valid replay cursor does not prove that its upstream follower still exists.
 Watch/probe restores missing or broken followers independently of replay-window
 resets. Opening a directory-followed thread promotes it to an explicit follower,
@@ -217,6 +236,8 @@ metadata edits, caching and failed-read recovery with isolated fixtures.
 Unknown state or patch structures can break watch independently of history. Schema version alone does not identify App versus IDE creation. Read verified v11/v13 state and apply Immer array-path patches transactionally against revisions; reject unknown structures. Initial history and watch run independently, with read-only history fallback and canonical/live merging. The adapter currently publishes v11 owner state; reading v13 is not complete v13 owner support.
 
 Sources and regressions: [state handling](ipc_state.go), [schema](ipc_schema.go), [schema tests](ipc_schema_test.go), [ownership tests](ipc_test.go) and [controller history failure tests](../../clients/nsgo/hubui/session_failure_test.go). Use isolated fixtures; real App behavior and unsupported upstream operations require separate verification.
+
+Direct app-server sends and steers each carry a fresh `clientUserMessageId`. Desktop uses the echoed `userMessage.clientId` to render remote follow-ups as distinct user bubbles, including repeated text within one turn. A successful write acknowledges server acceptance.
 
 App-owned turns also contain `steeringUserMessage` items: read their `input`, preserve the local item ID and recorded creation time, and match acknowledged server representations by explicit server/client IDs. Never deduplicate equal text. Merge canonical history with the live item order; a steer can appear before existing Agent output. Item insertion, removal or replacement requires a snapshot because common item events append at the controller.
 
@@ -328,14 +349,29 @@ before the explicit switch. The two servers do not transfer an active turn.
 Failed or ambiguous writes are never replayed on another connection.
 Restarting Codex while the shared backend is healthy reuses that backend.
 ReignHub reconnects to the same server after a transient local transport loss.
-ReignHub shutdown ends the shared backend and its tasks, while the desktop
-process remains open. The App needs a new launch after that backend ends.
+A detached local bridge owns the official app-server and the desktop listener.
+On Windows the bridge uses a separate process group and a hidden console
+configuration that preserves the startup pipes. The bridge reports a bounded
+startup result with a known failure stage through the private pipe. The
+provider only starts or restarts Codex App after the backend has initialized.
+Closing ReignHub releases its RPC connection. Codex App can continue using
+its existing connection. On startup the provider tries the last working transport first. A saved WebSocket
+record allows the desktop a short window to complete a reconnect before IPC
+is attempted. A successful fallback becomes the preferred transport on the next
+start. On Windows new bridge processes run from a private copy outside the
+installation directory so a GUI upgrade can leave the shared server running. It verifies the
+bridge TLS key before sending its bearer token and reattaches only when the
+bridge confirms a connected desktop. A surviving bridge with no desktop
+leaves IPC available for a normally launched App. After both clients
+disconnect for one minute the bridge exits and
+reaps the backend. A terminated backend requires a new desktop launch.
 
 The opt-in TestSharedCodexServerWithBundledCLI uses a temporary Codex home
 and a compatible executable supplied through REIGNHUB_TEST_SHARED_CODEX_CLI.
 It verifies authentication, independent initialization, shared thread reads
 and readiness after a replacement desktop connects without an `initialized`
-notification. Windows restart tests exercise process generation validation and
+notification. TestSharedDesktopSurvivesHubRestart keeps an isolated desktop connected
+while a provider closes, creates an ephemeral thread and reads it from a fresh provider. Windows restart tests exercise process generation validation and
 termination against a disposable child. Windows Store launch requires
 validation with the desktop App.
 The local fallback uses the existing encrypted endpoint and local activation
@@ -404,6 +440,11 @@ The same bundle also uses a separate app-server queue. [queue_server.go](queue_s
 reads `thread/queue/list` without resuming or acquiring the thread, with a 300 ms
 budget, at most four pages, and cursor-cycle/size/identity checks. Only explicit
 method-not-found means this source is unsupported/empty; failures remain unknown.
+Shared WebSocket sessions reconcile the same staging files and server queue on
+the latest history page. A queue-change notification requests a fresh snapshot
+for the affected session. The controller clears cached entries on a confirmed
+empty queue or a completed snapshot without queue support. Partial history
+fragments keep the last queue until reconciliation completes.
 Merge server order before desktop staging, using server `clientUserMessageId`
 links to suppress duplicates in favor of their desktop entry, never text equality.
 Full-input `codex-untrusted-app-input:` placeholders project only visible message
@@ -437,13 +478,14 @@ no changes in Go relay, Worker room or public service TS types.
 ## File links
 
 Markdown file references are exported only from the session workspace or the Hub
-attachment directory, through the existing scoped attachment store. Source-line
-suffixes and anchors identify the actual file; they do not become part of its
-filename. Preserve the original link as `Attachment.Source` for activation and
-mark source-location references inline so they do not add separate file cards.
+attachment directory, through the existing scoped attachment store. References with source lines or line anchors remain in the message text. The
+provider skips attachment export for them. For downloadable links, preserve the
+original destination as `Attachment.Source`.
 The controller reveals local files through NSGo's file-manager API and downloads
 remote files through their exported attachment IDs. It never turns a remote path
 into an arbitrary filesystem read or opens it on the controller. This changes no
 Go/Worker service endpoints or encrypted relay behavior. Isolated attachment and
 controller link tests cover path decoding, location suffixes, remote routing,
 missing files and actual downloaded bytes.
+
+When a shared server rejects resume for missing rollout history, ReignHub can send the first input on the original ID only after the same server confirms that exact thread is idle and its history is still unmaterialized. The watch subscribes once the first turn materializes.

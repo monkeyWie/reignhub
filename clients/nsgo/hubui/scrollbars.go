@@ -16,7 +16,19 @@ func (w *workspaceScrollbars) Scrollbar(cx *core.Scope, ref *core.Ref, horizonta
 		// NSGo hides even an always-on thumb when the content fits the viewport.
 		message := *theme
 		message.Mode = base.ScrollbarAlways
-		return message.Scrollbar(cx, ref, true)
+		bar := message.Scrollbar(cx, ref, true)
+		if cx.Env().OS() != core.OSMacOS {
+			return bar
+		}
+		// AppKit text selection claims drags inside the selectable message.
+		// Mark just the track as a pan region so its scrollbar responder
+		// receives the whole gesture, including release after a drag.
+		return core.View{
+			PointerEvents: core.PointerEventsBoxNone,
+			Style:         core.Style{Position: core.Absolute, Left: core.Pt(0), Right: core.Pt(0), Bottom: core.Pt(0), Height: theme.Horizontal.Style.Height},
+			OnPan:         func(core.PanEvent) {},
+			Children:      []core.Node{bar},
+		}
 	}
 	return theme.Scrollbar(cx, ref, horizontal)
 }

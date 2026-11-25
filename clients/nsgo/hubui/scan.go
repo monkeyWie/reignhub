@@ -1,51 +1,74 @@
 package hubui
 
 import (
+	"errors"
+
+	"github.com/monkeyWie/reignhub/clients/nsgo/hubui/locales"
 	"github.com/nsgo-dev/nsgo/base"
 	"github.com/nsgo-dev/nsgo/core"
 	"github.com/nsgo-dev/nsgo/icons/lucide"
+	"github.com/nsgo-dev/nsgo/ui"
 )
 
 func (s *State) scan(_ *core.Scope) { s.scanned = nil; s.dialog.Set("scan") }
+
 func (s *State) scanView(cx *core.Scope, close func()) core.Node {
+	l := locales.For(cx)
 	errorText := core.NewSignal(cx, "")
-	active := core.NewSignal(cx, true)
-	ref := &core.Ref{}
-	cx.OnKey("escape", close)
-	return base.Dialog{TestID: "dialog-scan", Label: "扫描设备二维码", Open: func() bool { return true }, OnOpenChange: func(open bool, _ base.Reason) {
-		if !open {
-			close()
+	pending := core.NewSignal(cx, "")
+	start := func() {
+		if pending.GetUntracked() != "" {
+			return
 		}
-	}, PopupStyleFunc: func() core.Style {
-		w := cx.Env().Window()
-		p := palette(cx)
-		return core.Style{Width: core.Pt(min(520, w.Width)), Height: core.Pt(w.Height), Background: p.background, PaddingEnv: core.EnvEdges{Top: core.EnvSafeArea, Bottom: core.EnvSafeArea}, Gap: 12, Padding: core.All(16)}
-	}, Children: []core.Node{
-		dialogHeader(cx, "scan-close", "扫描设备二维码", close),
-		label(cx, "将电脑上的 ReignHub 设备二维码放入画面中，将自动识别。", 13, true),
-		core.View{Style: fill.Merge(core.Style{CornerRadius: 16, Overflow: core.Hidden, Background: core.RGB(0x000000)}), Children: []core.Node{
-			core.Native{TestID: "live-qr-camera", Component: "ras.qr-camera", Ref: ref, PropsFunc: func() map[string]any { return map[string]any{"active": active.Get()} }, Style: fill, OnEvent: func(event string, value any) {
-				if !active.GetUntracked() {
-					return
-				}
-				switch event {
-				case "code":
-					if code, ok := value.(string); ok && s.acceptQR(code) {
-						return
-					}
-					errorText.Set("不是有效的 ReignHub 设备二维码，请扫描电脑上的设备二维码。")
-					ref.Command("retry", nil)
-				case "error":
-					if message, ok := value.(string); ok {
-						errorText.Set(message)
-					}
-				}
+		pending.Set("camera")
+		errorText.Set("")
+		cx.ScanCode(core.ScanOptions{Kinds: []core.CodeKind{core.CodeQR}}, func(code *core.ScannedCode, err error) {
+			pending.Set("")
+			switch {
+			case errors.Is(err, core.ErrNoScanner):
+				errorText.Set(l.ScanCameraUnavailable())
+			case err != nil:
+				errorText.Set(err.Error())
+			case code != nil && !s.acceptQR(code.Text):
+				errorText.Set(l.ScanInvalidDevice())
+			}
+		})
+	}
+	// The picker and its callbacks belong to this dialog's mounted scope.
+	cx.Post(start)
+	camera := busyButton(cx, "scan-camera", l.ScanOpenCamera(), lucide.ScanLine, "primary", func() bool {
+		return pending.Get() == "camera"
+	}, start).(core.View)
+	gallery := busyButton(cx, "scan-gallery", l.ScanFromPhotos(), lucide.Image, "outline", func() bool {
+		return pending.Get() == "gallery"
+	}, func() {
+		if pending.GetUntracked() != "" {
+			return
+		}
+		pending.Set("gallery")
+		errorText.Set("")
+		s.scanPhoto(cx, func(message string) {
+			errorText.Set(message)
+			pending.Set("")
+		})
+	}).(core.View)
+	busy := func() bool { return pending.Get() != "" }
+	camera.Disabled, gallery.Disabled = busy, busy
+	manual := button(cx, "scan-manual", l.ScanEnterID(), lucide.Keyboard, "ghost", func() {
+		s.dialog.Set("connect")
+	})
+	return modalDialog(cx, ui.Dialog{
+		TestID: "dialog-scan", Title: l.ScanDeviceCode(), Open: func() bool { return true },
+		OnOpenChange: func(open bool, _ base.Reason) {
+			if !open {
+				close()
+			}
+		},
+		Children: []core.Node{
+			core.Show{When: func() bool { return errorText.Get() != "" }, Then: func(cx *core.Scope) core.Node {
+				return dynamicText(cx, errorText.Get, 13, true)
 			}},
-		}},
-		core.Show{When: func() bool { return errorText.Get() != "" }, Then: func(cx *core.Scope) core.Node { return dynamicText(cx, errorText.Get, 13, true) }},
-		row(busyButton(cx, "scan-gallery", "从相册识别", lucide.Image, "outline", func() bool { return !active.Get() }, func() {
-			active.Set(false)
-			s.scanPhoto(cx, func(message string) { errorText.Set(message); active.Set(true); ref.Command("retry", nil) })
-		}), spacer(), button(cx, "scan-manual", "输入设备 ID", lucide.Keyboard, "ghost", func() { s.scanned = nil; s.dialog.Set("connect") })),
-	}}
+			camera, gallery, manual,
+		},
+	}, close)
 }

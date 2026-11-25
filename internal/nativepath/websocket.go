@@ -12,7 +12,12 @@ func WebSocketLink(ws *websocket.Conn) *Link {
 	ctx, cancel := context.WithCancel(context.Background())
 	conn := websocket.NetConn(ctx, ws, websocket.MessageBinary)
 	ws.SetReadLimit(32771)
-	return &Link{done: make(chan struct{}), Network: "WSS", lanes: []stream{conn}, close: func() { _ = conn.Close(); cancel() }}
+	return &Link{done: make(chan struct{}), Network: "WSS", lanes: []stream{conn}, close: func() {
+		// Discarding a candidate must not wait for the WebSocket close handshake.
+		cancel()
+		_ = ws.CloseNow()
+		_ = conn.Close()
+	}}
 }
 
 func DialWebSocket(ctx context.Context, address string) (*Link, error) {

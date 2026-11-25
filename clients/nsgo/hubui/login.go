@@ -26,14 +26,17 @@ func codeField(cx *core.Scope, id, title string, code *core.Signal[string], disa
 	input := ui.OtpInput{TestID: id, Label: title, Length: codeLength, Size: 48,
 		Value: code.Get, OnChange: code.Set, Ref: ref, Disabled: disabled,
 		Style: core.Style{AlignSelf: core.AlignStretch}}
-	// Keep the themed cells and native editor, but share the form width evenly.
-	field := input.Render(cx).(base.OtpInput)
-	field.GroupStyle.Width = core.Pct(100)
-	field.GroupStyle.Gap = 8
-	field.CellStyle.Width = core.Pt(0)
-	field.CellStyle.FlexGrow = 1
-	field.CellStyle.FontSize = 18
-	return formField(cx, title, field)
+	return formField(cx, title, core.Func(func(cx *core.Scope) core.Node {
+		useEditorTheme(cx)
+		// Keep the themed cells and native editor, but share the form width evenly.
+		field := input.Render(cx).(base.OtpInput)
+		field.GroupStyle.Width = core.Pct(100)
+		field.GroupStyle.Gap = 8
+		field.CellStyle.Width = core.Pt(0)
+		field.CellStyle.FlexGrow = 1
+		field.CellStyle.FontSize = 18
+		return field
+	}))
 }
 
 func (s *State) emailSignIn(cx *core.Scope, service *core.Signal[string], prefix string, close func()) core.Node {
@@ -127,16 +130,16 @@ func (s *State) emailSignIn(cx *core.Scope, service *core.Signal[string], prefix
 				send()
 			}
 		}
-		input := ui.Input{TestID: "account-email", Label: msg.LoginEmail(), Placeholder: "name@example.com", KeyboardType: core.KeyboardEmail,
-			AutoComplete: core.AutoCompleteEmail, AutoCapitalize: core.AutoCapitalizeNone, NoAutoCorrect: true,
+		input := formInput{TestID: "account-email", Label: msg.LoginEmail(), Placeholder: "name@example.com", KeyboardType: core.KeyboardEmail,
+			AutoComplete: core.AutoCompleteEmail, NoAutoCorrect: true,
 			Value: email.Get, OnChange: email.Set, Disabled: pending, OnSubmit: func(string) { submit() }, Style: core.Style{Height: core.Pt(44)}}
 		children := []core.Node{label(cx, msg.LoginEmailHint(), 13, true), formField(cx, msg.LoginEmail(), input)}
 		if !s.api.CanHost() {
 			children = append(children, ui.Collapsible{Text: msg.LoginService(), Open: showService.Get, OnOpenChange: showService.Set, Disabled: pending,
-				Content: ui.Input{TestID: "account-service", Label: msg.LoginService(), Value: service.Get, OnChange: service.Set, Disabled: pending, Style: core.Style{Height: core.Pt(44)}}})
+				Content: formInput{TestID: "account-service", Label: msg.LoginService(), Value: service.Get, OnChange: service.Set, Disabled: pending, Style: core.Style{Height: core.Pt(44)}}})
 		}
 		if usePassword {
-			children = append(children, formField(cx, msg.LoginPassword(), ui.Input{TestID: "account-password", Label: msg.LoginPassword(), Masked: true, AutoComplete: core.AutoCompletePassword, Value: password.Get, OnChange: password.Set, Disabled: pending, OnSubmit: func(string) { submit() }, Style: core.Style{Height: core.Pt(44)}}))
+			children = append(children, formField(cx, msg.LoginPassword(), formInput{TestID: "account-password", Label: msg.LoginPassword(), Masked: true, AutoComplete: core.AutoCompletePassword, Value: password.Get, OnChange: password.Set, Disabled: pending, OnSubmit: func(string) { submit() }, Style: core.Style{Height: core.Pt(44)}}))
 		}
 		start := s.actionButton(cx, choose(usePassword, "account-verify", "account-start"), choose(usePassword, msg.ConfirmLogin(), msg.SendLoginCode()), nil, "primary", submit).(core.View)
 		start.Style.MinHeight = core.Pt(44)

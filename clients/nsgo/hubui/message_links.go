@@ -14,6 +14,9 @@ func (s *State) openLink(cx *core.Scope, m Message, href string) {
 		cx.OpenURL(href, nil)
 		return
 	}
+	if _, location := filelink.Path(href); location {
+		return
+	}
 	if s.target == control.LocalTarget {
 		cwd := str(s.selected, "cwd")
 		if cwd == "" {

@@ -98,6 +98,19 @@ func (s *State) cancelSessionEntry() {
 	}
 }
 
+func openingPageQuery() persistence.PageQuery {
+	return persistence.PageQuery{ExtendTurn: func(turn Object, items []Object) bool {
+		if terminalTurn(turn) {
+			for _, item := range items {
+				if visibleTool(item) || str(item, "phase") == "commentary" {
+					return true
+				}
+			}
+		}
+		return false
+	}}
+}
+
 // Switch the heading, editor and history together when the local page is
 // ready. A slow store gets the usual loading view and can never hold navigation.
 func (s *State) prepareSession(session Object, target string) {
@@ -126,7 +139,7 @@ func (s *State) prepareSession(session Object, target string) {
 	dao := s.snapshots.storage
 	go func() {
 		defer timer.Stop()
-		page, err := dao.ReadPage(ctx, route, persistence.PageQuery{})
+		page, err := dao.ReadPage(ctx, route, openingPageQuery())
 		s.cx.Post(func() {
 			if ctx.Err() != nil {
 				return

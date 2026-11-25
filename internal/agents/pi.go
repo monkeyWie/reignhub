@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 
@@ -87,12 +88,15 @@ func newPi(ctx context.Context, p *Provider, id string) (runtimeAgent, error) {
 		return nil, err
 	}
 	var models struct {
-		Models []struct{ ID, Name, Provider string }
+		Models []struct {
+			ID, Name, Provider string
+			Input              []string
+		}
 	}
 	_ = decodeValue(data, &models)
 	for _, m := range models.Models {
 		encoded, _ := json.Marshal(map[string]string{"provider": m.Provider, "id": m.ID})
-		r.models = append(r.models, provider.Model{ID: string(encoded), Name: m.Name + " · " + m.Provider})
+		r.models = append(r.models, provider.Model{ID: string(encoded), Name: m.Name + " · " + m.Provider, ImageInput: slices.Contains(m.Input, "image")})
 	}
 	return r, nil
 }
@@ -112,7 +116,7 @@ func (r *piRuntime) Alive() bool {
 	}
 }
 func (r *piRuntime) Capabilities() provider.Capabilities {
-	return provider.Capabilities{MaxAttachmentBytes: 20 << 20, Streaming: true, History: true, Create: true, Send: true, Steer: true, Interrupt: true, Approvals: true, ImageInput: true}
+	return provider.Capabilities{ComposerSettings: true, MaxAttachmentBytes: 20 << 20, Streaming: true, History: true, Create: true, Send: true, Steer: true, Interrupt: true, Approvals: true, ImageInput: true}
 }
 func (r *piRuntime) Open(ctx context.Context, cwd, native string) (string, error) {
 	if native != "" && native != r.native {
@@ -217,12 +221,18 @@ func (r *piRuntime) Prompt(ctx context.Context, text string, files []provider.At
 	r.mu.Unlock()
 	defer func() { r.mu.Lock(); r.settled = nil; r.promptCancel = nil; r.mu.Unlock() }()
 	if model != "" {
-		var chosen struct{ Provider, ID string }
+		var chosen piModel
 		if json.Unmarshal([]byte(model), &chosen) != nil || chosen.Provider == "" || chosen.ID == "" {
 			return errors.New("Pi 模型标识无效")
 		}
-		if _, err := r.request(ctx, map[string]any{"type": "set_model", "provider": chosen.Provider, "modelId": chosen.ID}); err != nil {
+		state, err := r.state(ctx)
+		if err != nil {
 			return err
+		}
+		if chosen != state.Model {
+			if _, err := r.request(ctx, map[string]any{"type": "set_model", "provider": chosen.Provider, "modelId": chosen.ID}); err != nil {
+				return err
+			}
 		}
 	}
 	input := map[string]any{"type": "prompt", "message": text}

@@ -149,7 +149,7 @@ func TestModelSelectionThroughControl(t *testing.T) {
 				if params["cursor"] == "page-2" {
 					result = json.RawMessage(`{"data":[{"model":"model-b","displayName":"Second model","isDefault":false}],"nextCursor":null}`)
 				} else {
-					result = json.RawMessage(`{"data":[{"model":"model-a","displayName":"First model","isDefault":true},{"model":"hidden","displayName":"Hidden model","hidden":true}],"nextCursor":"page-2"}`)
+					result = json.RawMessage(`{"data":[{"model":"model-a","displayName":"First model","isDefault":true,"inputModalities":["text","image"]},{"model":"hidden","displayName":"Hidden model","hidden":true}],"nextCursor":"page-2"}`)
 				}
 			case "turn/start":
 				var params map[string]any
@@ -179,7 +179,7 @@ func TestModelSelectionThroughControl(t *testing.T) {
 	d := &control.Dispatcher{Providers: map[string]provider.Provider{"codex-app": p}}
 	response := d.Handle(ctx, control.Request{Method: "models", Provider: "codex-app"})
 	var models []provider.Model
-	if response.Error != "" || json.Unmarshal(response.Result, &models) != nil || len(models) != 2 || models[0].ID != "model-a" || !models[0].Default || models[1].ID != "model-b" {
+	if response.Error != "" || json.Unmarshal(response.Result, &models) != nil || len(models) != 2 || models[0].ID != "model-a" || !models[0].Default || !models[0].ImageInput || models[1].ID != "model-b" || models[1].ImageInput {
 		t.Fatalf("invalid paginated catalog: %+v %s", response, response.Result)
 	}
 	response = d.Handle(ctx, control.Request{Method: "send", Provider: "codex-app", Session: "fixture-thread", Text: "fixture message", Model: "model-b"})

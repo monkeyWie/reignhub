@@ -3,7 +3,6 @@ package hubui
 import (
 	"bytes"
 	"context"
-	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -40,9 +39,7 @@ func TestMessageFileLinksFollowExecutionDevice(t *testing.T) {
 		attachment, ready, download, reveal, notice bool
 	}{
 		{"local relative", "local", "build%20file.zip", true, true, false, true, false},
-		{"local relative source line", "local", "build%20file.zip:3:2", false, false, false, true, false},
 		{"local absolute", "local", filepath.ToSlash(file), true, true, false, true, false},
-		{"local source location", "local", (&url.URL{Scheme: "file", Path: filepath.ToSlash(file)}).String() + "#L12", false, false, false, true, false},
 		{"remote matching local path", "remote", filepath.ToSlash(file), true, true, true, false, false},
 		{"remote Windows path", "remote", `C:\project\build.zip`, true, true, true, false, false},
 		{"remote unavailable", "remote", "build%20file.zip", true, false, false, false, true},
@@ -131,5 +128,47 @@ func TestLocalLinkFailureAndWebLinkFeedback(t *testing.T) {
 		if p := filelink.Resolve(bad, t.TempDir()); p != "" {
 			t.Fatalf("nonlocal reference resolved: %s", bad)
 		}
+	}
+}
+
+func TestMessageSourceReferenceShowsHoverPath(t *testing.T) {
+	api := &linkRoutingAPI{downloadFixture: &downloadFixture{demoAPI: newDemoAPI()}, routes: make(chan string, 1)}
+	a := api.attachment()
+	a["source"], a["inline"] = "src/shared_connection.go:156", true
+	m := Message{ID: "source", Role: "assistant", Text: "相关代码在 **[实现](src/shared_connection.go:156)**。", Attachments: []Object{a}}
+	app := nsgotest.Start(t, func(cx *core.Scope) core.Node {
+		cx.SetTheme(core.DefaultTheme())
+		s := newState(cx, api)
+		s.target, s.selected = "remote", Object{"cwd": `C:\project`}
+		return s.message(cx, func() Message { return m })
+	}, nsgotest.Size(680, 300), nsgotest.Environment(core.Environment{OS: core.OSMacOS, Idiom: core.IdiomDesktop}))
+	const caption = "text:shared_connection.go (line 156)"
+	const path = `text:C:\project\src\shared_connection.go (line 156)`
+	app.WaitFor(caption, time.Second)
+	app.Hover(caption)
+	app.Advance(500 * time.Millisecond)
+	app.WaitFor(path, time.Second)
+	app.Press(caption)
+	if len(app.RevealedFiles) != 0 || api.reads.Load() != 0 || app.Exists("id:attachments-source") {
+		t.Fatal("source reference exposed a file operation")
+	}
+}
+
+func TestLongSourceReferenceTooltipWraps(t *testing.T) {
+	const name = "useMiniAppInstall.ts (line 268)"
+	const path = `D:\code\workspace_2025\app\src\main-process\features\installation\services\hooks\useMiniAppInstall.ts (line 268)`
+	app := nsgotest.Start(t, func(cx *core.Scope) core.Node {
+		cx.SetTheme(core.DefaultTheme())
+		s := newState(cx, newDemoAPI())
+		m := Message{ID: "fixture", Role: "assistant", Text: "代码在 [实现](<D:/code/workspace_2025/app/src/main-process/features/installation/services/hooks/useMiniAppInstall.ts:268>)。"}
+		return core.View{Style: core.Style{Padding: core.Edges{Top: 150, Left: 25}}, Children: []core.Node{s.message(cx, func() Message { return m })}}
+	}, nsgotest.Size(1000, 300), nsgotest.Measure(), nsgotest.Environment(core.Environment{OS: core.OSMacOS, Idiom: core.IdiomDesktop}))
+	app.Hover("text:" + name)
+	app.Advance(500 * time.Millisecond)
+	app.WaitFor("text:"+path, time.Second)
+	hint := globalBounds(app.Find("text:" + path))
+	app.Screenshot("source-reference-wrapped-path")
+	if hint.Size.Height < 36 || hint.Origin.X < 0 || hint.Origin.X+hint.Size.Width > 1000 {
+		t.Fatalf("long path must wrap inside the viewport: %+v", hint)
 	}
 }

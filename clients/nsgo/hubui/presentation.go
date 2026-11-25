@@ -3,6 +3,7 @@ package hubui
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"unicode/utf16"
 
@@ -288,9 +289,16 @@ func uniqueTurns(turns []Object) []Object {
 	return out
 }
 
+func historyItemIndex(items []Object, id string) int {
+	if id == "" {
+		return -1
+	}
+	return slices.IndexFunc(items, func(item Object) bool { return str(item, "id") == id })
+}
+
 func mergeLatest(old, latest Object) Object {
 	out := copyObject(latest)
-	if queue := object(latest["queue"]); queue != nil {
+	if queue, ok := latest["queue"].(Object); ok && queue != nil {
 		out["queue"] = mergeMessageQueue(object(old["queue"]), queue)
 	}
 	previous, next := uniqueTurns(objects(old["turns"])), uniqueTurns(objects(latest["turns"]))
@@ -332,15 +340,12 @@ func mergeLatest(old, latest Object) Object {
 		prior := objects(byID[partial]["items"])
 		items := objects(next[0]["items"])
 		if len(items) > 0 {
-			for j, item := range prior {
-				if str(item, "id") != "" && str(item, "id") == str(items[0], "id") {
-					first := copyObject(next[0])
-					first["items"] = append(append([]Object{}, prior[:j]...), items...)
-					next[0] = first
-					out["nextCursor"] = old["nextCursor"]
-					joinedPartial = true
-					break
-				}
+			if j := historyItemIndex(prior, str(items[0], "id")); j >= 0 {
+				first := copyObject(next[0])
+				first["items"] = append(append([]Object{}, prior[:j]...), items...)
+				next[0] = first
+				out["nextCursor"], out["partialTurn"] = old["nextCursor"], old["partialTurn"]
+				joinedPartial = true
 			}
 		}
 	}
@@ -417,7 +422,10 @@ func mergeLatest(old, latest Object) Object {
 			}
 		}
 		out["turns"] = append(kept, next...)
-		out["nextCursor"] = old["nextCursor"]
+		out["nextCursor"], out["partialTurn"] = old["nextCursor"], old["partialTurn"]
+		if partial == "" && str(old, "partialTurn") == str(next[0], "id") {
+			delete(out, "partialTurn")
+		}
 	}
 	return out
 }
@@ -446,7 +454,7 @@ func applyEvents(source Object, events []Object) (Object, bool) {
 			continue
 		}
 		if kind == "queue" {
-			if queue := object(e["queue"]); queue != nil {
+			if queue, ok := e["queue"].(Object); ok && queue != nil {
 				out["queue"] = mergeMessageQueue(object(out["queue"]), queue)
 			}
 			continue

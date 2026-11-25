@@ -146,6 +146,7 @@ func (s *State) finishSessionRemoval(ss Object) {
 	}
 	w.sessions = kept
 	s.workspaces[target] = w
+	s.cx.Storage().RemoveItem(permissionCacheKey(target, agent, id))
 	s.discardSessionDraft(target, agent, id)
 	s.clearRemovedSelection(target, agent, id)
 	s.publishWorkspaces()
@@ -181,6 +182,7 @@ func (s *State) reconcileSessionRemovals(target, agent string, incoming []Object
 		for key := range markers {
 			identity := decodeSessionIdentity(key)
 			if len(identity) == 3 && identity[0] == target && identity[1] == agent && !present[identity[2]] {
+				s.cx.Storage().RemoveItem(permissionCacheKey(target, agent, identity[2]))
 				s.discardSessionDraft(target, agent, identity[2])
 				s.clearRemovedSelection(target, agent, identity[2])
 				if s.dialog.GetUntracked() == "remove-session" && sessionIdentity(s.removalTarget) == key {

@@ -250,9 +250,17 @@ func (s *State) publishWorkspaces() {
 			entry := copyObject(session)
 			entry["deviceId"] = id
 			if s.selected != nil && id == s.target && str(entry, "id") == str(s.selected, "id") && str(entry, "providerId") == str(s.selected, "providerId") {
-				if title := str(entry, "title"); title != "" && title != str(s.selected, "title") {
+				title := str(entry, "title")
+				if title != "" && title != str(s.selected, "title") || flag(entry, "codexOwnerUnreachable") != flag(s.selected, "codexOwnerUnreachable") {
 					s.selected = copyObject(s.selected)
-					s.selected["title"] = title
+					if title != "" {
+						s.selected["title"] = title
+					}
+					if flag(entry, "codexOwnerUnreachable") {
+						s.selected["codexOwnerUnreachable"] = true
+					} else {
+						delete(s.selected, "codexOwnerUnreachable")
+					}
 				}
 			}
 			sessions = append(sessions, entry)

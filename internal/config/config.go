@@ -23,7 +23,7 @@ type Config struct {
 	Listen                string           `json:"listen"`
 	RemoteListen          string           `json:"remoteListen"`
 	RemoteEnabled         bool             `json:"remoteEnabled"`
-	RemoteTerminalEnabled bool             `json:"remoteTerminalEnabled,omitempty"`
+	RemoteTerminalEnabled bool             `json:"remoteTerminalEnabled"`
 	DesktopListen         string           `json:"desktopListen"`
 	CodexCLI              string           `json:"codexCli"`
 	CodexApp              string           `json:"codexApp"`
@@ -59,7 +59,7 @@ func DefaultDir() string {
 }
 
 func Load(dir string) (Config, error) {
-	c := Config{DataDir: dir, Listen: "127.0.0.1:7331", RemoteListen: "0.0.0.0:7332", DesktopListen: "127.0.0.1:7333", STUN: []string{"stun:stun.cloudflare.com:3478", "stun:stun.l.google.com:19302"}}
+	c := Config{DataDir: dir, RemoteTerminalEnabled: true, Listen: "127.0.0.1:7331", RemoteListen: "0.0.0.0:7332", DesktopListen: "127.0.0.1:7333", STUN: []string{"stun:stun.cloudflare.com:3478", "stun:stun.l.google.com:19302"}}
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return c, err
 	}

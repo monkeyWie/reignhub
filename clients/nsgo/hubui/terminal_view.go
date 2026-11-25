@@ -1,4 +1,4 @@
-//go:build (darwin && !ios) || windows || (linux && !android)
+//go:build darwin || windows || (linux && !android) || (js && wasm && !nsgominiprogram && !nsgoharmony)
 
 package hubui
 
@@ -8,12 +8,9 @@ import (
 	"errors"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/monkeyWie/reignhub/clients/nsgo/hubui/locales"
-	"github.com/monkeyWie/reignhub/clients/nsgo/terminalengine"
-	"github.com/monkeyWie/reignhub/internal/bridge"
 	"github.com/monkeyWie/reignhub/internal/control"
 	"github.com/monkeyWie/reignhub/internal/device"
 	model "github.com/monkeyWie/reignhub/internal/terminal"
@@ -23,12 +20,6 @@ import (
 	"github.com/nsgo-dev/nsgo/icons/lucide"
 	"github.com/nsgo-dev/nsgo/ui"
 )
-
-var terminalHostOnce sync.Once
-
-func initializeTerminalHost() {
-	terminalHostOnce.Do(func() { bridge.SetTerminalFactory(terminalengine.New) })
-}
 
 func (s *State) selectedTerminal() *terminalPanel {
 	if s.terminalPanels == nil {
@@ -62,7 +53,10 @@ func (s *State) terminalButton(cx *core.Scope) core.Node {
 		supported := core.NewMemo(cx, func() bool { s.read(); return s.agentCapability("terminal") })
 		return core.Dynamic(func(cx *core.Scope) core.Node {
 			ok := supported.Get()
-			title := locales.For(cx).ToggleTerminal() + " (" + cx.KeyLabel("ctrl+`") + ")"
+			title := locales.For(cx).ToggleTerminal()
+			if cx.Env().Desktop() {
+				title += " (" + cx.KeyLabel("ctrl+`") + ")"
+			}
 			if !ok {
 				title = locales.For(cx).TerminalUnsupported()
 			}
@@ -452,11 +446,11 @@ func (s *State) terminalContent(cx *core.Scope, p *terminalPanel, tab *terminalT
 			light, dark := terminal.LightTheme(), terminal.DarkTheme()
 			light.Background, light.Foreground = core.RGB(lightColors.page), core.RGB(lightColors.text)
 			dark.Background, dark.Foreground = core.RGB(darkColors.page), core.RGB(darkColors.text)
-			view := reservedTerminalView{View: terminal.View{Terminal: t, Ref: ref, TestID: "conversation-terminal", Label: locales.For(cx).Terminal(), AutoFocus: true, Theme: light, DarkTheme: dark, Style: fill}, toggle: s.toggleTerminal}
+			view := reservedTerminalView{View: terminal.View{Terminal: t, Ref: ref, TestID: "conversation-terminal", Label: locales.For(cx).Terminal(), AutoFocus: true, RightClickAction: terminal.RightClickIgnore, Theme: light, DarkTheme: dark, Style: fill}, toggle: s.toggleTerminal}
 			return ui.ContextMenu{TestID: "terminal-menu", Style: fill, Trigger: view, Children: []core.Node{
-				ui.MenuItem{Text: locales.For(cx).TerminalCopy(), Icon: lucide.Copy, Disabled: func() bool { return !ref.Selected() }, OnSelect: ref.Copy},
+				ui.MenuItem{Text: locales.For(cx).Copy(), Icon: lucide.Copy, Disabled: func() bool { return !ref.Selected() }, OnSelect: ref.Copy},
 				ui.MenuItem{Text: locales.For(cx).TerminalPaste(), Icon: lucide.ClipboardPaste, OnSelect: ref.Paste},
-				ui.MenuItem{Text: locales.For(cx).TerminalSelectAll(), OnSelect: ref.SelectAll},
+				ui.MenuItem{Text: locales.For(cx).SelectAll(), OnSelect: ref.SelectAll},
 			}}
 		}),
 	}}
@@ -480,7 +474,7 @@ func retryTerminalConnection(err error) bool {
 	return true
 }
 
-// NSGo v0.2.0 binds every Ctrl character in scoped Show branches on focus and
+// NSGo binds every Ctrl character in scoped Show branches on focus and
 // after IME composition. Decorate those public render nodes so the application's
 // reserved shortcut is registered last in exactly the same lifetime, without
 // changing the framework or intercepting shell Ctrl+C/Ctrl+Space bytes.
@@ -503,17 +497,4 @@ func (v reservedTerminalView) Render(cx *core.Scope) core.Node {
 		}
 	}
 	return root
-}
-
-func (s *State) terminalSettings(cx *core.Scope) core.Node {
-	checked := func() bool { s.read(); return flag(s.host, "remoteTerminalEnabled") }
-	look := ui.NewSwitchLook(cx, checked, ui.SizeSmall)
-	return row(core.View{Style: core.Style{FlexGrow: 1, Gap: 4}, Children: []core.Node{
-		label(cx, locales.For(cx).RemoteTerminal(), 14, false), label(cx, locales.For(cx).RemoteTerminalHint(), 12, true),
-	}}, base.Switch{TestID: "remote-terminal-enabled", Label: locales.For(cx).RemoteTerminal(), Checked: checked,
-		Disabled: func() bool { return s.actionPending("remote-terminal-enabled") }, TrackStyleFunc: look.Track, ThumbStyleFunc: look.Thumb,
-		OnChange: func(value bool) {
-			s.call("remote-terminal-enabled", "host.terminal.enabled", Object{"enabled": value}, func(any) { s.host = copyObject(s.host); s.host["remoteTerminalEnabled"] = value })
-		},
-	})
 }

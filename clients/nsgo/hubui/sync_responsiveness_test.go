@@ -126,8 +126,14 @@ func TestSyncDotsOverlayDoesNotMoveMessages(t *testing.T) {
 
 func TestLargeProgressiveHistoryKeepsNavigationResponsive(t *testing.T) {
 	f := &independentStreamAPI{demoAPI: newDemoAPI(), snapshots: make(chan snapshotRequest, 4), events: make(chan Object, 8), approvalsStarted: make(chan struct{})}
+	// Cold entry displays progressive fragments while the full read is pending.
+	f.demoAPI.transcript = nil
 	app := nsgotest.Start(t, func(cx *core.Scope) core.Node { return RootWithAPI(cx, f, true) }, nsgotest.Size(390, 844))
-	openDemoChat(t, app)
+	showSessionDirectory(t, app)
+	session := sessionSelector("demo-device", "codex-app", "demo-chat")
+	app.WaitFor(session, 5*time.Second)
+	app.Press(session)
+	app.WaitFor("id:chat-input", time.Second)
 	var request snapshotRequest
 	select {
 	case request = <-f.snapshots:

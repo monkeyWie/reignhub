@@ -17,7 +17,7 @@ func noticeFixture(t *testing.T, width int, dark bool) (*nsgotest.App, *State) {
 		s.applyColors()
 		s.target = "remote"
 		return core.View{Style: fill, Children: []core.Node{
-			button(cx, "show-notice", "Show notice", nil, "ghost", func() { s.openLink(cx, Message{}, "fixture.go:12") }),
+			button(cx, "show-notice", "Show notice", nil, "ghost", func() { s.openLink(cx, Message{}, "fixture.zip") }),
 			button(cx, "unrelated-update", "Refresh", nil, "ghost", s.changed),
 			button(cx, "open-modal", "Open modal", nil, "ghost", func() { s.dialog.Set("connect") }),
 			s.noticeOverlay(cx),
@@ -69,7 +69,7 @@ func TestNoticeAboveModalAndWithinViewport(t *testing.T) {
 				app.WaitUntil(time.Second, func() bool { return app.Find(pairingInput).Text == "01234" })
 				inputID := app.Find(pairingInput).ID
 				// An asynchronous result can arrive while a modal is already open.
-				app.Post(func() { s.cx.Post(func() { s.openLink(s.cx, Message{}, "fixture.go:12") }) })
+				app.Post(func() { s.cx.Post(func() { s.openLink(s.cx, Message{}, "fixture.zip") }) })
 				app.WaitFor("id:notice", time.Second)
 				bounds := globalBounds(app.Find("id:notice"))
 				if bounds.Origin.X < 17 || bounds.Origin.X+bounds.Size.Width > core.Points(width-17) || bounds.Size.Height <= 0 {

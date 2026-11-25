@@ -62,9 +62,14 @@ func (s *State) sidebarWidth() core.Points {
 	return max(260, min(s.sessionWidth.Get(), s.width.Get()*0.46))
 }
 
+func (s *State) sidebarCollapsed() bool { return !s.mobileClient && s.sidebarHidden.Get() }
+
 func (s *State) sidebarToggle(cx *core.Scope) core.Node {
+	if s.mobileClient {
+		return nil
+	}
 	title := func() string {
-		if s.sidebarHidden.Get() {
+		if s.sidebarCollapsed() {
 			return locales.For(cx).ShowSidebar()
 		}
 		return locales.For(cx).HideSidebar()
@@ -74,7 +79,7 @@ func (s *State) sidebarToggle(cx *core.Scope) core.Node {
 		s.saveSidebarPreferences()
 	}).(core.View)
 	v.LabelFunc = title
-	v.Expanded = func() bool { return !s.sidebarHidden.Get() }
+	v.Expanded = func() bool { return !s.sidebarCollapsed() }
 	v.Tooltip = tooltipCard(cx, dynamicText(cx, title, 12, false))
 	v.Desktop.WindowDrag = core.WindowDragOff
 	v.Style.Width, v.Style.Height, v.Style.MinHeight, v.Style.Padding = core.Pt(40), core.Pt(30), core.Pt(30), core.All(7)
@@ -82,7 +87,7 @@ func (s *State) sidebarToggle(cx *core.Scope) core.Node {
 		v.Style.Width, v.Style.Height, v.Style.MinHeight = core.Pt(44), core.Pt(44), core.Pt(44)
 	}
 	v.Children = []core.Node{core.Icon{SVGFunc: func() *core.SVG {
-		if s.sidebarHidden.Get() {
+		if s.sidebarCollapsed() {
 			return lucide.PanelLeftOpen()
 		}
 		return lucide.PanelLeftClose()
@@ -95,12 +100,12 @@ func (s *State) sidebarToggle(cx *core.Scope) core.Node {
 func (s *State) sidebarToolbarSlot(cx *core.Scope, leading func() core.Points) core.Node {
 	return core.View{TestID: "sidebar-toolbar-slot", Desktop: core.DesktopViewProps{WindowDrag: core.WindowDragOn}, Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, JustifyContent: core.JustifyEnd, Height: core.Pct(100), Padding: core.Edges{Right: 12}, FlexShrink: 0}, StyleFunc: func() core.Style {
 		width := s.sidebarWidth() - leading()
-		if s.sidebarHidden.Get() {
+		if s.sidebarCollapsed() {
 			width = 44
 		}
 		return core.Style{Width: core.Pt(max(56, width))}
 	}, Children: []core.Node{
-		core.Show{When: func() bool { return s.inlineSidebarHeading(cx) && !s.sidebarHidden.Get() }, Then: func(cx *core.Scope) core.Node {
+		core.Show{When: func() bool { return s.inlineSidebarHeading(cx) && !s.sidebarCollapsed() }, Then: func(cx *core.Scope) core.Node {
 			return core.Group{
 				core.View{Desktop: core.DesktopViewProps{WindowDrag: core.WindowDragOff}, Style: core.Style{Margin: core.Edges{Left: 12}}, Children: []core.Node{s.brand(cx, 16, true)}},
 				spacer(), s.addDeviceButton(cx),
@@ -121,7 +126,7 @@ func (s *State) inlineSidebarHeading(cx *core.Scope) bool {
 // their platform-owned inset or the toolbar's layout measurements.
 func (s *State) sidebarTitlebarSurface(cx *core.Scope) core.Node {
 	return core.View{TestID: "sidebar-titlebar-surface", PointerEvents: core.PointerEventsNone, Style: core.Style{Position: core.Absolute, Top: core.Pt(0), Bottom: core.Pt(0), Left: core.Pt(0)}, StyleFunc: func() core.Style {
-		return core.Style{Display: choose(s.narrowLayout() || s.sidebarHidden.Get(), core.DisplayNone, core.DisplayFlex), Width: core.Pt(s.sidebarWidth()), Background: palette(cx).sidebar}
+		return core.Style{Display: choose(s.narrowLayout() || s.sidebarCollapsed(), core.DisplayNone, core.DisplayFlex), Width: core.Pt(s.sidebarWidth()), Background: palette(cx).sidebar}
 	}}
 }
 

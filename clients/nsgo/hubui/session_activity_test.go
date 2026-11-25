@@ -20,7 +20,11 @@ func TestSessionActivityIndicatorsAndCompletion(t *testing.T) {
 	}, nsgotest.Size(1100, 900), nsgotest.Environment(core.Environment{OS: core.OSMacOS, Idiom: core.IdiomDesktop, Locale: "zh-CN"}))
 	row := sessionRowID("all", running)
 	spinner := app.Find("id:running-" + row).ID
-	app.Type("id:chat-input", "未发送草稿")
+	app.Focus("id:chat-input")
+	app.Compose("id:chat-input", "wei")
+	app.Screenshot("composer-composing-light")
+	app.Commit("id:chat-input", "未")
+	app.Type("id:chat-input", "发送草稿")
 	editor := app.Find("id:chat-input").ID
 	checkNeutralInteraction := func(c colorScheme) {
 		t.Helper()
@@ -39,6 +43,9 @@ func TestSessionActivityIndicatorsAndCompletion(t *testing.T) {
 		}
 		checkDrawing(app.Find("id:running-" + row))
 		input := app.Find("id:chat-input")
+		if input.Input.AccentColor != core.RGB(c.text) || input.Input.AutoCapitalize != core.AutoCapitalizeNone {
+			t.Fatal("composer did not configure input-method color and capitalization")
+		}
 		if !foundInk || input.Input.CaretColor != core.RGB(c.text) {
 			t.Fatal("spinner or caret did not follow the neutral theme")
 		}
@@ -65,7 +72,7 @@ func TestSessionActivityIndicatorsAndCompletion(t *testing.T) {
 		app.Advance(500 * time.Millisecond)
 		app.WaitFor("text:置顶会话", time.Second)
 		if app.Find("id:pin-"+row).Style.Background != 0 || app.Find("id:status-"+row).Style.Opacity != 0 {
-			t.Fatal("hover actions added a background or overlapped the status indicator")
+			t.Fatal("running indicator must be hidden while the row actions are visible")
 		}
 		app.Screenshot("session-contextual-icon-tooltip")
 		app.Press("id:pin-" + row)
@@ -104,6 +111,14 @@ func TestSessionActivityIndicatorsAndCompletion(t *testing.T) {
 	}
 	if app.Find("id:unread-"+row).Style.Background != core.RGB(lightColors.brand) {
 		t.Fatal("unread dot does not use the light brand attention color")
+	}
+	app.Hover("id:" + row)
+	if app.Find("id:status-"+row).Style.Opacity != 0 || app.Find("id:actions-"+row).Style.Opacity != 1 {
+		t.Fatal("hover must replace the unread dot with the row actions")
+	}
+	app.HoverOut()
+	if app.Find("id:status-"+row).Style.Opacity == 0 {
+		t.Fatal("unread indicator did not return after hover")
 	}
 	app.Screenshot("session-completion-dot-light")
 	sidebarMenuAction(app, "theme-toggle")

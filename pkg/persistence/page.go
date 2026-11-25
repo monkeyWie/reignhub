@@ -20,6 +20,9 @@ func (a PageCursor) Less(b PageCursor) bool {
 type PageQuery struct {
 	Before, After *PageCursor
 	Limit         int
+	// On a tail read, the caller may finish the turn split by Limit.
+	// Items are in read order. WindowSize and PageBytes still bound the page.
+	ExtendTurn func(turn Object, items []Object) bool
 }
 
 const PageSize = 50
@@ -39,11 +42,13 @@ type HistoryPage struct {
 type PageBuilder struct {
 	Page                      HistoryPage
 	forward                   bool
+	extendTurn                func(Object, []Object) bool
 	upper                     *PageCursor
 	turns                     []Object
 	items                     []Object
 	current                   Object
 	turn, count, bytes, limit int
+	itemLimit                 int
 }
 
 func NewPage(head Object, revision string, query PageQuery) *PageBuilder {
@@ -51,10 +56,10 @@ func NewPage(head Object, revision string, query PageQuery) *PageBuilder {
 	if limit <= 0 {
 		limit = PageSize
 	}
-	return &PageBuilder{Page: HistoryPage{Transcript: head, Revision: revision}, limit: min(limit, WindowSize), forward: query.After != nil, upper: query.Before}
+	return &PageBuilder{Page: HistoryPage{Transcript: head, Revision: revision}, limit: min(limit, WindowSize), forward: query.After != nil, upper: query.Before, extendTurn: query.ExtendTurn}
 }
-func (b *PageBuilder) full(size int) bool {
-	if b.count > 0 && (b.count >= b.limit || b.bytes+size > PageBytes) {
+func (b *PageBuilder) full(size, limit int) bool {
+	if b.count > 0 && (b.count >= limit || b.bytes+size > PageBytes) {
 		if b.forward {
 			at := b.Page.End
 			b.Page.After = &at
@@ -82,12 +87,13 @@ func (b *PageBuilder) Turn(position int, raw []byte) (bool, error) {
 	if b.forward && b.upper != nil && position > b.upper.Turn {
 		return false, nil
 	}
-	if b.full(len(raw)) {
+	if b.full(len(raw), b.limit) {
 		return false, nil
 	}
 	if err := json.Unmarshal(raw, &b.current); err != nil {
 		return false, err
 	}
+	b.itemLimit = b.limit
 	b.turn = position
 	b.bytes += len(raw)
 	return true, nil
@@ -95,7 +101,10 @@ func (b *PageBuilder) Turn(position int, raw []byte) (bool, error) {
 func (b *PageBuilder) Item(position int, raw []byte) (bool, error) {
 	at := PageCursor{b.turn, position}
 	bounded := b.forward && b.upper != nil && !at.Less(*b.upper)
-	if bounded || b.full(len(raw)) {
+	if b.count == b.limit && b.extendTurn != nil && !b.forward && b.upper == nil && b.extendTurn(b.current, b.items) {
+		b.itemLimit = WindowSize
+	}
+	if bounded || b.full(len(raw), b.itemLimit) {
 		if len(b.items) == 0 {
 			b.current = nil
 		}

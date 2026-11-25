@@ -367,22 +367,52 @@ func originalImageKey(provider, session, digest string) string {
 	return provider + "|" + session + "|original:" + digest
 }
 
+// The host can assign a new attachment ID when importing an uploaded image.
+func attachmentCacheKey(provider, session string, a Object, thumbnail bool) string {
+	if !thumbnail && str(a, "kind") == "image" && str(a, "sha256") != "" {
+		return originalImageKey(provider, session, str(a, "sha256"))
+	}
+	return provider + "|" + session + "|" + str(a, "id") + fmt.Sprint("|", thumbnail)
+}
+
+func (s *State) imageKey(a Object, thumbnail bool) string {
+	return s.target + "|" + attachmentCacheKey(str(s.selected, "providerId"), str(s.selected, "id"), a, thumbnail)
+}
+
 func (s *State) attachmentBytes(ctx context.Context, target, p, session string, a Object, thumbnail bool) ([]byte, error) {
 	return s.attachmentBytesProgress(ctx, target, p, session, a, thumbnail, nil)
+}
+
+func (s *State) cachedAttachmentBytes(ctx context.Context, target, key, expectedDigest string) []byte {
+	cached, err := s.api.Call(ctx, "client.assetCache.get", Object{"key": key}, target, nil)
+	if err != nil || ctx.Err() != nil {
+		return nil
+	}
+	b, err := base64.StdEncoding.DecodeString(str(object(cached), "data"))
+	if err != nil || len(b) == 0 || expectedDigest != "" && hashBytes(b) != expectedDigest {
+		return nil
+	}
+	return b
 }
 
 // Read immutable chunks with bounded concurrency, checking every offset and the
 // final digest. Progress counts bytes actually received, never queued requests.
 func (s *State) attachmentBytesProgress(ctx context.Context, target, p, session string, a Object, thumbnail bool, progress func(int64, int64)) ([]byte, error) {
-	key := p + "|" + session + "|" + str(a, "id") + fmt.Sprint("|", thumbnail)
-	if !thumbnail && str(a, "kind") == "image" && str(a, "sha256") != "" {
-		key = originalImageKey(p, session, str(a, "sha256"))
+	key := attachmentCacheKey(p, session, a, thumbnail)
+	digest := str(a, "sha256")
+	var b []byte
+	if thumbnail {
+		b = s.cachedAttachmentBytes(ctx, target, key, "")
+		if len(b) == 0 && digest != "" && str(a, "kind") == "image" && ctx.Err() == nil {
+			b = s.cachedAttachmentBytes(ctx, target, originalImageKey(p, session, digest), digest)
+		}
+	} else if digest != "" {
+		b = s.cachedAttachmentBytes(ctx, target, key, digest)
 	}
-	cached, _ := s.api.Call(ctx, "client.assetCache.get", Object{"key": key}, target, nil)
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
-	if b, e := base64.StdEncoding.DecodeString(str(object(cached), "data")); e == nil && len(b) > 0 && (thumbnail || hashBytes(b) == str(a, "sha256")) {
+	if len(b) > 0 {
 		if progress != nil {
 			progress(int64(len(b)), int64(len(b)))
 		}
@@ -483,7 +513,7 @@ func (s *State) attachmentBytesProgress(ctx context.Context, target, p, session 
 	return out, nil
 }
 func (s *State) loadImage(a Object, thumbnail bool) {
-	key := s.key() + "|" + str(a, "id") + fmt.Sprint("|", thumbnail)
+	key := s.imageKey(a, thumbnail)
 	if s.images[key] != nil {
 		s.touchImage(key)
 		return
@@ -515,7 +545,7 @@ func (s *State) imageTile(cx *core.Scope, message func() Message, get func() Obj
 	a := core.Untracked(cx, get)
 	thumb := flag(a, "thumbnail")
 	s.loadImage(a, thumb)
-	key := s.key() + "|" + str(a, "id") + fmt.Sprint("|", thumb)
+	key := s.imageKey(a, thumb)
 	image := core.Image{Label: str(a, "name"), SourceFunc: func() core.ImageSource { s.read(); return core.ImageSource{Data: s.images[key]} }, ResizeMode: core.Cover, Style: core.Style{Width: core.Pct(100), Height: core.Pt(128)}}
 	return s.attachmentCard(cx, a, func() { s.previewAttachment(message(), a) }, image)
 }
@@ -546,17 +576,21 @@ func (s *State) attachmentCard(cx *core.Scope, a Object, preview func(), content
 	card := core.View{TestID: "attachment-" + str(a, "id"), Style: core.Style{MinWidth: core.Pt(0), Width: core.Pct(100), AlignSelf: core.AlignStart, CornerRadius: 10, Overflow: core.Hidden, BorderWidth: 1}, StyleFunc: func() core.Style {
 		return core.Style{BorderColor: palette(cx).border, Background: palette(cx).muted}
 	}, Children: []core.Node{body}}
-	return s.attachmentActions(cx, a, card, false)
+	return s.attachmentActions(cx, func() Object { return a }, card, false)
 }
 
 // Download and preview have independent hit targets. Touch uses the same
 // context menu as desktop secondary-click instead of relying on hidden icons.
-func (s *State) attachmentActions(cx *core.Scope, a Object, card core.View, thumbnail bool) core.Node {
-	id, name := str(a, "id"), str(a, "name")
-	if name == "" {
-		name = "附件"
+func (s *State) attachmentActions(cx *core.Scope, get func() Object, card core.View, thumbnail bool) core.Node {
+	id := str(core.Untracked(cx, get), "id")
+	downloadTitle := func() string {
+		name := str(get(), "name")
+		if name == "" {
+			name = "附件"
+		}
+		return "下载 " + name
 	}
-	download := func() { s.download(cx, a) }
+	download := func() { s.download(cx, get()) }
 	card.Style.Group = "attachment"
 	if thumbnail {
 		// Contrast belongs to the image surface, not a filled tile on the icon.
@@ -576,7 +610,7 @@ func (s *State) attachmentActions(cx *core.Scope, a Object, card core.View, thum
 	card.Children = append(card.Children, core.View{TestID: "attachment-actions-" + id,
 		Style:     core.Style{Position: core.Absolute, Right: core.Pt(choose(thumbnail, core.Points(2), core.Points(6))), Bottom: core.Pt(choose(thumbnail, core.Points(2), core.Points(9)))},
 		StyleFunc: func() core.Style { return contextualAffordance(cx, "attachment", false) },
-		Children:  []core.Node{contextualIconButton(cx, "download-"+id, "下载 "+name, lucide.Download, download)}})
+		Children:  []core.Node{contextualIconButtonWithLabel(cx, "download-"+id, dynamicText(cx, downloadTitle, 12, false), lucide.Download, download)}})
 	return ui.ContextMenu{TestID: "attachment-menu-" + id,
 		Style:   core.Style{Width: card.Style.Width, Height: card.Style.Height, MinWidth: core.Pt(0), AlignSelf: core.AlignStart},
 		Trigger: card, Children: []core.Node{ui.MenuItem{TestID: "attachment-download-action", Text: "下载", Icon: lucide.Download, OnSelect: download}}}
@@ -647,31 +681,72 @@ func (u *Upload) progressPercent() float32 {
 // User images are compact composer-style previews above the right-aligned
 // bubble; Agent files and generated images use the full gallery below text.
 func (s *State) userImageGallery(cx *core.Scope, get func() Message) core.Node {
-	images := core.NewMemoFunc(cx, func() []Object {
-		out := []Object{}
+	type imageKey struct {
+		content    string
+		occurrence int
+	}
+	type entry struct {
+		key  imageKey
+		meta Object
+	}
+	images := core.NewMemoFunc(cx, func() []entry {
+		var out []entry
+		counts := map[string]int{}
 		for _, a := range get().Attachments {
 			if str(a, "kind") == "image" && !flag(a, "inline") {
-				out = append(out, a)
+				content := s.imageKey(a, false)
+				out = append(out, entry{imageKey{content, counts[content]}, a})
+				counts[content]++
 			}
 		}
 		return out
 	}, nil)
 	return core.Show{When: func() bool { return len(images.Get()) > 0 }, Then: func(cx *core.Scope) core.Node {
 		return core.View{TestID: "user-images-" + get().ID, Style: core.Style{Width: core.Pct(100), MinWidth: core.Pt(0), Direction: core.Row, Wrap: core.Wrap, JustifyContent: core.JustifyEnd, Gap: 8, Padding: core.Edges{Bottom: 8}}, Children: []core.Node{
-			core.Each(images.Get, func(a Object) string { return str(a, "id") }, func(cx *core.Scope, a func() Object, _ func() int) core.Node {
-				meta := core.Untracked(cx, a)
-				thumb := flag(meta, "thumbnail")
-				s.loadImage(meta, thumb)
-				key := s.key() + "|" + str(meta, "id") + fmt.Sprint("|", thumb)
-				name := str(meta, "name")
-				preview := core.View{TestID: "image-" + str(meta, "id"), Role: core.RoleButton, Label: "预览图片 " + name, Tooltip: tooltipCard(cx, label(cx, name, 12, false)), Style: core.Style{Width: core.Pct(100), Height: core.Pct(100)}, StyleFunc: func() core.Style { return pressStyle(cx) }, OnPress: func(core.PressEvent) { s.previewAttachment(get(), a()) }, Children: []core.Node{
-					core.Image{Label: name, SourceFunc: func() core.ImageSource { s.read(); return core.ImageSource{Data: s.images[key]} }, ResizeMode: core.Cover, Style: core.Style{Width: core.Pct(100), Height: core.Pct(100)}},
-				}}
-				card := core.View{TestID: "attachment-" + str(meta, "id"), Style: core.Style{Width: core.Pt(88), MaxWidth: core.Pct(100), Height: core.Pt(88), CornerRadius: 10, Overflow: core.Hidden, BorderWidth: 1}, StyleFunc: func() core.Style { return core.Style{BorderColor: palette(cx).border, Background: palette(cx).muted} }, Children: []core.Node{preview}}
-				return s.attachmentActions(cx, meta, card, true)
+			core.Each(images.Get, func(e entry) imageKey { return e.key }, func(cx *core.Scope, current func() entry, _ func() int) core.Node {
+				return s.userImageTile(cx, get, func() Object { return current().meta })
 			}),
 		}}
 	}}
+}
+
+func (s *State) userImageTile(cx *core.Scope, message func() Message, attachment func() Object) core.Node {
+	meta := core.Untracked(cx, attachment)
+	id := str(meta, "id")
+	name := func() string { return str(attachment(), "name") }
+	original := s.imageKey(meta, false)
+
+	// Keep using the same cached source across updates to the host's resource.
+	// Only the cache owns the bytes, so eviction and clearing still take effect.
+	displayedKey := original
+	resource := core.NewMemoFunc(cx, attachment, func(a, b Object) bool {
+		return str(a, "id") == str(b, "id") && str(a, "state") == str(b, "state") && flag(a, "thumbnail") == flag(b, "thumbnail")
+	})
+	cx.Effect(func() {
+		a := resource.Get()
+		if len(s.images[displayedKey]) == 0 && len(s.images[original]) == 0 {
+			s.loadImage(a, flag(a, "thumbnail"))
+		}
+	})
+	source := func() core.ImageSource {
+		s.read()
+		a := resource.Get()
+		if len(s.images[displayedKey]) == 0 {
+			displayedKey = original
+			if len(s.images[original]) == 0 {
+				displayedKey = s.imageKey(a, flag(a, "thumbnail"))
+			}
+		}
+		return core.ImageSource{Data: s.images[displayedKey]}
+	}
+	preview := core.View{
+		TestID: "image-" + id, Role: core.RoleButton, LabelFunc: func() string { return "预览图片 " + name() },
+		Tooltip: tooltipCard(cx, dynamicText(cx, name, 12, false)), OnPress: func(core.PressEvent) { s.previewAttachment(message(), attachment()) },
+		Style: core.Style{Width: core.Pct(100), Height: core.Pct(100)}, StyleFunc: func() core.Style { return pressStyle(cx) },
+		Children: []core.Node{core.Image{LabelFunc: name, SourceFunc: source, ResizeMode: core.Cover, Style: core.Style{Width: core.Pct(100), Height: core.Pct(100)}}},
+	}
+	card := core.View{TestID: "attachment-" + id, Style: core.Style{Width: core.Pt(88), MaxWidth: core.Pct(100), Height: core.Pt(88), CornerRadius: 10, Overflow: core.Hidden, BorderWidth: 1}, StyleFunc: func() core.Style { return core.Style{BorderColor: palette(cx).border, Background: palette(cx).muted} }, Children: []core.Node{preview}}
+	return s.attachmentActions(cx, attachment, card, true)
 }
 
 func (s *State) previewDraftImage(selected *Upload) {

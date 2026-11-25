@@ -58,6 +58,10 @@ func TestAndroidConversationKeepsScreenOnOnlyWhileVisibleAndActive(t *testing.T)
 	}
 	// A wider phone/tablet layout keeps its persistent sidebar.
 	app.Resize(720, 844)
+	app.WaitFor("id:session-sidebar", time.Second)
+	if app.Exists("id:toggle-sidebar") {
+		t.Fatal("wide mobile sidebar includes a collapse button")
+	}
 	app.Press(sessionSelector("demo-device", "codex-app", "demo-chat"))
 	app.WaitUntil(time.Second, awake.Load)
 	app.Back()

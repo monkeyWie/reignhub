@@ -64,6 +64,46 @@ func TestServerQueueMergeAndLiveConsumption(t *testing.T) {
 	}
 }
 
+func TestSharedServerQueueClearsAfterNotification(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", home)
+	t.Setenv("AppData", home)
+	p := New(config.Config{}, "", events.New())
+	p.shared = &sharedConnection{}
+	var mu sync.Mutex
+	entries := json.RawMessage(`[{"id":"server","clientUserMessageId":"local","input":[{"type":"text","text":"queued"}]}]`)
+	backendFixture(t, p, func(m rpc.Message) (any, *rpc.Error) {
+		if m.Method != "thread/queue/list" || stringValue(decodeObject(m.Params)["threadId"]) != "selected" {
+			t.Errorf("unexpected shared RPC: %s", m.Method)
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		return map[string]any{"data": entries}, nil
+	})
+	ctx := context.Background()
+	writeQueueJSON(t, home, []any{map[string]any{"id": "local", "text": "queued"}})
+	q := p.messageQueue(ctx, "selected", "", nil)
+	if q == nil || q.State != "ready" || len(q.Messages) != 1 || q.Messages[0].ID != "local" {
+		t.Fatal("shared staging and server queue did not reconcile", q)
+	}
+	epoch, cursor := p.stream().log.Position()
+	mu.Lock()
+	entries = json.RawMessage(`[]`)
+	mu.Unlock()
+	writeQueueJSON(t, home, []any{})
+	p.observeStream(rpc.Message{Method: "thread/queue/changed", Params: rawJSON(map[string]any{"threadId": "selected"})})
+	batch, err := p.stream().log.Probe(ctx, "selected", epoch, cursor)
+	if err != nil || len(batch.Events) != 1 || batch.Events[0].Kind != "snapshot" {
+		t.Fatal("shared queue change did not request a snapshot", err, batch)
+	}
+	q = p.messageQueue(ctx, "selected", "", nil)
+	if q == nil || q.State != "ready" || len(q.Messages) != 0 || p.messageQueue(ctx, "selected", "older", nil) != nil {
+		t.Fatal("shared queue did not clear on the latest page", q)
+	}
+}
+
 func TestServerQueuePagingFailureCancellationAndRecovery(t *testing.T) {
 	for _, mode := range []string{"pages", "unsupported", "malformed", "repeat", "oversized", "cancel"} {
 		t.Run(mode, func(t *testing.T) {

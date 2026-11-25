@@ -178,3 +178,17 @@ func TestFailedMessageRetryKeepsOriginalPayloadAndNewDraft(t *testing.T) {
 		t.Fatal("successful retry still offers another retry")
 	}
 }
+
+func TestMessageFooterCopyPosition(t *testing.T) {
+	for _, role := range []string{"user", "assistant"} {
+		t.Run(role, func(t *testing.T) {
+			app, _ := conversationFixture(t, newDemoAPI(), 390, outgoingTranscript(Object{"id": "fixture", "role": role, "text": "Fixture"}), true)
+			copyBounds := globalBounds(app.Find("id:copy-message-turn|fixture"))
+			timeBounds := globalBounds(app.Find("text:时间未知"))
+			if role == "user" && copyBounds.Origin.X < timeBounds.Origin.X+timeBounds.Size.Width ||
+				role == "assistant" && timeBounds.Origin.X < copyBounds.Origin.X+copyBounds.Size.Width {
+				t.Fatalf("wrong footer order for %s: copy %v, time %v", role, copyBounds, timeBounds)
+			}
+		})
+	}
+}

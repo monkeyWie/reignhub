@@ -113,7 +113,7 @@ func (s *State) messageNavigation(cx *core.Scope, rows *core.Memo[[]Message], vi
 	}, slices.Equal[[]messageNavigationTarget])
 	hover := core.NewSignal(cx, float32(-100))
 	previewTarget := core.NewSignal(cx, "")
-	return core.View{TestID: "message-navigation", Style: core.Style{Position: core.Absolute, Top: core.Pt(0), Bottom: core.Pt(0), Left: core.Pt(4), Width: core.Pt(44), JustifyContent: core.JustifyCenter}, Children: []core.Node{
+	return core.View{TestID: "message-navigation", PointerEvents: core.PointerEventsBoxNone, Style: core.Style{Position: core.Absolute, Top: core.Pt(0), Bottom: core.Pt(0), Left: core.Pt(4), Width: core.Pt(44), JustifyContent: core.JustifyCenter}, Children: []core.Node{
 		core.View{Style: core.Style{MaxHeight: core.Pt(288)}, OnMouseLeave: func(core.MouseEvent) { hover.Set(-100) }, Children: []core.Node{
 			core.Each(targets.Get, func(t messageNavigationTarget) string { return t.id }, func(cx *core.Scope, target func() messageNavigationTarget, index func() int) core.Node {
 				id := fmt.Sprintf("message-tick-%s", target().id)

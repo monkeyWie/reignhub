@@ -8,7 +8,6 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -29,15 +28,16 @@ import (
 )
 
 type sharedServer struct {
-	ctx      context.Context
-	cancel   context.CancelFunc
-	client   *rpc.Client
-	address  string
-	hubPath  string
-	upstream string
-	token    string
-	desktop  atomic.Pointer[sharedDesktop]
-	slots    chan struct{}
+	ctx         context.Context
+	cancel      context.CancelFunc
+	processDone chan struct{}
+	client      *rpc.Client
+	address     string
+	hubPath     string
+	upstream    string
+	token       string
+	desktop     atomic.Pointer[sharedDesktop]
+	slots       chan struct{}
 }
 
 type sharedDesktop struct {
@@ -63,14 +63,16 @@ func startSharedServer(ctx context.Context, cli string, observe rpc.Observer) (*
 	system.HideConsole(cmd)
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", sharedStartupCLI, err)
 	}
 	if err := cmd.Start(); err != nil {
 		_ = stderr.Close()
-		return nil, fmt.Errorf("启动共享 Codex 后端失败: %w", err)
+		return nil, fmt.Errorf("%w: %w", sharedStartupCLI, err)
 	}
+	s.processDone = make(chan struct{})
 	endpoint := make(chan string, 1)
 	go func() {
+		defer close(s.processDone)
 		scanner := bufio.NewScanner(stderr)
 		for scanner.Scan() {
 			if address := sharedListenURL.FindString(scanner.Text()); address != "" {
@@ -93,11 +95,11 @@ func startSharedServer(ctx context.Context, cli string, observe rpc.Observer) (*
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	case <-life.Done():
-		return nil, errors.New("共享 Codex 后端提前退出，请检查 App 版本是否支持本机 WebSocket 和鉴权")
+		return nil, sharedStartupExited
 	}
 	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp4", "127.0.0.1:0")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", sharedStartupListener, err)
 	}
 	s.address = "ws://" + listener.Addr().String()
 	server := &http.Server{
@@ -109,14 +111,25 @@ func startSharedServer(ctx context.Context, cli string, observe rpc.Observer) (*
 	go func() { _ = server.Serve(listener); cancel() }()
 	s.client, err = rpc.DialAuthenticated(ctx, s.address+s.hubPath, s.token, observe)
 	if err != nil {
-		return nil, errors.New("共享 Codex 后端未完成初始化")
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, sharedStartupInitialize
 	}
 	context.AfterFunc(life, func() { _ = s.client.Close() })
 	established = true
 	return s, nil
 }
 
-func (s *sharedServer) close() { s.cancel() }
+func (s *sharedServer) close() {
+	s.cancel()
+	if s.processDone != nil {
+		select {
+		case <-s.processDone:
+		case <-time.After(2 * time.Second):
+		}
+	}
+}
 func (s *sharedServer) connected() bool {
 	desktop := s.desktop.Load()
 	return s.ctx.Err() == nil && desktop != nil && desktop.ready.Load() > 0

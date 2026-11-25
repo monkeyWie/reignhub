@@ -9,6 +9,9 @@ build:
   installers: true
   jobs: 1
   targets: [macos_arm64, windows_x64, linux_x64, ios, android_arm64, web]
+licenses:
+  # The BSD-licensed memory module also ships a LICENSE-LOGO URL for its artwork.
+  allow: [modernc.org/memory]
 android:
   permissions: [android.permission.INTERNET, android.permission.CAMERA, android.permission.POST_NOTIFICATIONS]
 linux:

@@ -160,13 +160,18 @@ func (s *State) agentControls(cx *core.Scope, prefix string, p func() Object, op
 
 func (s *State) activateCodex(action string, p Object, restart bool, done func()) {
 	s.runAction(action, func(ctx context.Context) (any, error) {
-		return s.api.Call(ctx, "host.activate", Object{"provider": "codex-app"}, "", Object{"expected": p["instances"], "confirmRestart": restart})
+		return nil, s.activateLocalCodex(ctx, p, restart)
 	}, func(any) {
 		if done != nil {
 			done()
 		}
 		s.poll()
 	})
+}
+
+func (s *State) activateLocalCodex(ctx context.Context, p Object, restart bool) error {
+	_, err := s.api.Call(ctx, "host.activate", Object{"provider": "codex-app"}, "", Object{"expected": p["instances"], "confirmRestart": restart})
+	return err
 }
 
 func (s *State) agentHelp(cx *core.Scope, id string) core.Node {

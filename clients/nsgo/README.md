@@ -4,7 +4,7 @@
 
 ## 技术与目录
 
-按照 [NSGo 官方文档](https://nsgo.dev/zh/docs/) 开发，依赖版本以本目录 [go.mod](go.mod) 和 `go.sum` 为准。当前使用 NSGo `v0.2.0`，其 API 仍在演进，升级应单独做平台和界面回归。
+按照 [NSGo 官方文档](https://nsgo.dev/zh/docs/) 开发，依赖版本以本目录 [go.mod](go.mod) 和 `go.sum` 为准。消息选区在 macOS、iOS、Android 和 Web 使用系统或浏览器的文本菜单；Windows 和 Linux 右键提供“复制”和“全选”，“全选”作用于当前消息正文。升级 NSGo 时应做平台和界面回归。
 
 - 原生平台使用 NSGo 平台视图，无 WebView；浏览器使用官方 Go WASM + DOM 后端。
 - `hubui/`：统一设备与会话侧栏、本机 Agent 面板、可配置项目树、聊天、模型选择、授权、图片附件及响应式布局。
@@ -143,7 +143,7 @@ GOWORK=off go tool nsgo test -target web \
 
 ## 平台验证范围
 
-- 实时扫码通过 [原生能力扩展](native/README.md) 接入 Android Camera2 和 iOS AVFoundation，照片不上传到服务器；权限和前后台恢复需要对应平台验证。
+- 实时扫码使用 NSGo 官方 ScanCode 接口调用 Android 和 iOS 相机，照片不上传到服务器；权限和前后台恢复需要对应平台验证。
 - 尚无 Android / iOS 真机验收，也未测试公网真实设备配对；不把交叉编译、模拟器或隔离测试当作这些验证。
 - 原生字体、Markdown 内部排版及弹窗仍由 NSGo 原生组件绘制。各平台的文本选择、输入、滚动和窗口行为需分别验收，不能用单一平台的截图代替全部平台检查。
 

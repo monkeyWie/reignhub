@@ -13,6 +13,7 @@ import (
 var ErrUnavailable = errors.New("provider unavailable")
 
 type Capabilities struct {
+	ComposerSettings bool `json:"composerSettings,omitempty"`
 	// Terminal is supplied by the desktop host, independently of the Agent.
 	Terminal         bool `json:"terminal,omitempty"`
 	TerminalProfiles bool `json:"terminalProfiles,omitempty"`
@@ -110,6 +111,8 @@ type Session struct {
 	CreatedAt    int64  `json:"createdAt"`
 	ActiveTurnID string `json:"activeTurnId,omitempty"`
 	Model        string `json:"model,omitempty"`
+	// CodexOwnerUnreachable identifies a held session whose IPC owner could not be reached.
+	CodexOwnerUnreachable bool `json:"codexOwnerUnreachable,omitempty"`
 }
 
 type SessionPage struct {
@@ -222,9 +225,10 @@ type CreateOptions struct {
 }
 
 type Model struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Default bool   `json:"default"`
+	ImageInput bool   `json:"imageInput,omitempty"`
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Default    bool   `json:"default"`
 }
 
 // SessionModelProvider discovers models in the selected workspace/session.
@@ -291,6 +295,12 @@ type Provider interface {
 	Decide(context.Context, string, Decision) error
 	// Expected contains the exact instances the user saw when confirming.
 	ConnectDesktop(context.Context, []Instance, bool) error
+}
+
+// SessionApprovalProvider refreshes requests that the Agent exposes through
+// session state before returning the current approvals for that session.
+type SessionApprovalProvider interface {
+	SessionApprovals(context.Context, string) ([]Approval, error)
 }
 
 // SessionRemover owns the Agent-specific removal semantics. It must reject busy

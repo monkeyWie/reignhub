@@ -41,6 +41,9 @@ func testCompactSidebar(t *testing.T, dark bool) {
 	app.PressAt("id:mobile-menu", core.Point{X: 22, Y: 22})
 	app.WaitFor("id:session-sidebar", time.Second)
 	app.Advance(time.Second)
+	if (nsgotest.Target() == "" || nsgotest.Target() == "ios_simulator" || nsgotest.Target() == "android") && (app.Exists("id:close-mobile-sidebar") || app.Exists("id:toggle-sidebar")) {
+		t.Fatal("mobile drawer includes a collapse button")
+	}
 	drawer := globalBounds(app.Find("id:mobile-sidebar"))
 	if drawer.Size.Width > 390*.88 || drawer.Size.Width < 280 || drawer.Origin.X != 0 {
 		t.Fatalf("drawer did not leave a reachable backdrop: %+v", drawer)

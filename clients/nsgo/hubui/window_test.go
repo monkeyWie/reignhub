@@ -16,10 +16,10 @@ func TestDesktopWindowFrame(t *testing.T) {
 			app := nsgotest.Start(t, func(cx *core.Scope) core.Node { return RootWithAPI(cx, newDemoAPI(), false) }, nsgotest.Size(1000, 800), nsgotest.Environment(core.Environment{OS: os, Idiom: core.IdiomDesktop}))
 			hidden, controls := false, false
 			for _, command := range app.Window {
-				if command.Action == core.WindowSetTitleBar && command.TitleBar == core.TitleBarHidden {
+				if command.Action == nsgotest.WindowSetTitleBar && command.TitleBar == core.TitleBarHidden {
 					hidden = true
 				}
-				if command.Action == core.WindowSetControls && command.Controls == (core.WindowControls{}) {
+				if command.Action == nsgotest.WindowSetControls && command.Controls == (core.WindowControls{}) {
 					controls = true
 				}
 			}
@@ -59,7 +59,7 @@ func TestDesktopWindowFrame(t *testing.T) {
 					app.Press("id:" + id)
 				}
 				commands := app.Window[len(app.Window)-3:]
-				for i, action := range []core.WindowAction{core.WindowMinimize, core.WindowToggleMaximize, core.WindowClose} {
+				for i, action := range []nsgotest.WindowAction{nsgotest.WindowMinimize, nsgotest.WindowToggleMaximize, nsgotest.WindowClose} {
 					if commands[i].Action != action {
 						t.Fatalf("Linux control action %d: %v", i, commands[i])
 					}

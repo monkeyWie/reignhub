@@ -42,7 +42,7 @@ func (s *State) questionCard(cx *core.Scope, a Object) core.Node {
 	index := core.NewSignal(cx, 0)
 	busy := func() bool { return s.actionPending(key) }
 	disabled := func() bool {
-		if s.key() != session || !s.connected() || busy() {
+		if s.key() != session || !s.canWriteSession() || busy() {
 			return true
 		}
 		for _, current := range s.approvals {
@@ -169,7 +169,7 @@ func (s *State) questionCard(cx *core.Scope, a Object) core.Node {
 		if len(optionRows) > 0 {
 			children = append(children, core.View{Style: core.Style{Gap: 2}, Children: optionRows})
 		}
-		input := core.Input{TestID: fmt.Sprintf("question-input-%s-%d", id, i), Label: "自定义回答", Placeholder: choose(len(options) > 0, "或输入其他回答…", "输入你的回答…"), Disabled: disabled, Masked: flag(q, "isSecret"), Multiline: !flag(q, "isSecret"),
+		input := editorInput{TestID: fmt.Sprintf("question-input-%s-%d", id, i), Label: "自定义回答", Placeholder: choose(len(options) > 0, "或输入其他回答…", "输入你的回答…"), Disabled: disabled, Masked: flag(q, "isSecret"), Multiline: !flag(q, "isSecret"),
 			Value: func() string {
 				v := value.Get()
 				if v.Custom {

@@ -127,9 +127,29 @@ and remote controllers consume the same `status`/`activeTurnId` fields.
 
 ## Persistence and recovery
 
-The new `agents.db` uses the existing private-permission SQLite settings store. It stores per-instance metadata indexes and separate per-session history records; no cloud schema is required. Persist history before including a new ID in the index. Serialize snapshot writes so an older completion cannot overwrite a newer transcript.
+Managed Providers store session metadata and dirty turn and message rows in the application database. A transaction commits those rows and their stream checkpoint together. Directory restoration reads summaries, and transcript requests read bounded pages. A completed idle session releases its in-memory turns.
 
 ReignHub-owned sessions resume with the stored native session ID or Pi session file. ACP `session/load` replay becomes canonical history. Native sessions are listed only when both listing and loading are advertised. SDK/tool reasoning and raw tool output are not exposed as user-facing messages.
+
+## Composer settings
+
+Permission and reasoning choices belong to the selected session. Codex offers
+the built-in read-only, workspace approval, automatic review and full-access
+presets permitted by its permission profiles and managed policy. Reasoning
+choices come from the selected model. Writes follow the current IPC owner or
+the shared app-server. The permission control shows the active session preset
+or custom profile reported by its owner, including when managed policy
+restricts the available choices. An IPC snapshot or a shared-server resume
+refreshes the control on first entry. Until the host reports a policy, the
+control shows that its permission has yet to sync.
+
+ACP uses session configuration options and legacy session modes reported by the
+Agent. The option IDs and selections come from the native session. Pi exposes the
+current model’s thinking levels and retains its native tool approval extension.
+The controller reads choices again after a change and hides controls that the
+Agent or selected model does not offer. The controller confirms a switch to full
+access for the current session and device. ACP adapters mark recognized native
+permission-bypass choices in mode and permission selectors. ACP reasoning controls carry the semantic kind `effort` alongside their native write ID. The model catalogue marks image input only when the individual model advertises that modality.
 
 ## Session removal
 
@@ -145,7 +165,7 @@ Codex uses `thread/read` metadata to reject active work, then the supported
 `app-server generate-json-schema` contract was checked for these parameters.
 No writer takeover or private history-file deletion is used. ACP v1 and Pi do not
 provide a portable native deletion operation: their shared Provider implements
-`detach`, persisting a per-instance exclusion in `agents.db`, retaining native
+`detach`, persisting a per-instance exclusion in `removed_sessions`, retaining native
 history, and preventing native discovery from reimporting the removed entry.
 An idle ReignHub-owned runtime is closed after successful persistence.
 

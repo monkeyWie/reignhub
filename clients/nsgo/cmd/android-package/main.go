@@ -90,7 +90,7 @@ func main() {
 	z, e := zip.OpenReader(*input)
 	must(e)
 	defer z.Close()
-	files := []apk.File{{Name: "classes.dex", Data: read(*dex)}, {Name: "assets/ras/THIRD_PARTY_NOTICES.txt", Data: read("native/android/THIRD_PARTY_NOTICES.txt")}}
+	files := []apk.File{{Name: "classes.dex", Data: read(*dex)}}
 	var icon []byte
 	for _, file := range z.File {
 		if file.Name == "AndroidManifest.xml" || file.Name == "resources.arsc" || strings.HasPrefix(file.Name, "classes") || strings.HasPrefix(file.Name, "META-INF/") {
@@ -114,5 +114,5 @@ func main() {
 	must(e)
 	must(apk.Write(out, read(*manifest), apk.Manifest{Package: cfg.ID, Label: cfg.Name, VersionName: cfg.Version, VersionCode: cfg.BuildNumber, Permissions: cfg.Android.Permissions, TargetSDK: cfg.Android.TargetSDK, Icon: icon}, files, key))
 	must(out.Close())
-	fmt.Println("Packaged native QR host:", *output)
+	fmt.Println("Packaged Android host:", *output)
 }

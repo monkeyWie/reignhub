@@ -4,10 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/monkeyWie/reignhub/pkg/persistence"
+	"github.com/nsgo-dev/nsgo/core"
+	"github.com/nsgo-dev/nsgo/nsgotest"
 )
 
 type capturedSnapshot struct {
@@ -218,4 +221,131 @@ func TestSendReportsGenuineStorageFailure(t *testing.T) {
 	if api.sends.Load() != 1 || s.error != "" {
 		t.Fatal("storage failure changed Agent delivery or repeated the send")
 	}
+}
+
+// A mostly hidden 205-item turn spans five network pages. The echo of
+// the initial prompt and a later steer both precede the newest 50 records.
+func TestReconnectKeepsUserMessagesOnOfflineReopen(t *testing.T) {
+	testReconnectUserMessages(t, false)
+}
+
+func TestReconnectRepairsPreviouslyTruncatedCache(t *testing.T) {
+	testReconnectUserMessages(t, true)
+}
+
+func testReconnectUserMessages(t *testing.T, truncated bool) {
+	t.Helper()
+	ctx := context.Background()
+	dao := timelineTestDAO(t)
+	key := persistence.Session{Env: "fixture-" + persistence.Revision(), Provider: "codex-app", ID: "demo-chat"}
+	defer dao.ForgetHistory(ctx, key.Env)
+	api := &historyStreamFixture{independentStreamAPI: &independentStreamAPI{
+		demoAPI: newDemoAPI(), snapshots: make(chan snapshotRequest, 4),
+		events: make(chan Object, 8), approvalsStarted: make(chan struct{}),
+	}, HistoryDAO: dao}
+	message := func(id, role, text string) Object { return Object{"id": id, "role": role, "text": text} }
+	before := Object{"id": "before", "status": "completed", "items": []Object{message("a", "assistant", "Previous reply")}}
+	items := make([]Object, 205)
+	for i := range items {
+		items[i] = message(fmt.Sprint(i), "reasoning", "")
+	}
+	items[0] = message("prompt", "user", "Original request")
+	items[90] = message("steer", "user", "A follow-up")
+	items[204] = message("answer", "assistant", "Final reply")
+	page := func(start, end int) Object {
+		p := Object{"streamEpoch": "live", "streamCursor": 2, "nextCursor": "before-long", "turns": []Object{{"id": "long", "status": "completed", "items": items[start:end]}}}
+		if start > 0 {
+			p["partialTurn"], p["nextCursor"] = "long", fmt.Sprint(start)
+		}
+		return p
+	}
+	base := Object{"streamEpoch": "live", "resume": Object{"epoch": "live", "cursor": 1}, "nextCursor": "before-history",
+		"turns": []Object{before, {"id": "long", "status": "inProgress", "items": items[:1]}}}
+	if truncated {
+		base["partialTurn"] = "long"
+		base["turns"] = []Object{before, objects(page(155, 205)["turns"])[0]}
+	}
+	if err := dao.ApplyHistory(ctx, key, persistence.Diff("", nil, base)); err != nil {
+		t.Fatal(err)
+	}
+	first, err := dao.ReadPage(ctx, key, persistence.PageQuery{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var s *State
+	app := nsgotest.Start(t, func(cx *core.Scope) core.Node {
+		s = newState(cx, api)
+		s.devices = []Object{{"id": key.Env, "connected": true}}
+		s.target = key.Env
+		s.selected = Object{"id": key.ID, "providerId": key.Provider}
+		s.setTranscript(first.View())
+		return s.compactWorkspace(cx)
+	}, nsgotest.Size(390, 844))
+	app.Post(func() { s.startSessionWatch() })
+	for end := len(items); end > 0; {
+		app.WaitUntil(3*time.Second, func() bool { return len(api.snapshots) > 0 || s.stream != nil && s.stream.verified })
+		if len(api.snapshots) == 0 {
+			t.Fatal("accepted a suffix that skips the user's confirmed input")
+		}
+		if !truncated {
+			app.Find("text:Original request")
+		}
+		start := max(0, end-persistence.PageSize)
+		fragment := page(start, end)
+		if start == 0 {
+			fragment["turns"] = append([]Object{before}, objects(fragment["turns"])...)
+			fragment["nextCursor"] = "before-history"
+		}
+		(<-api.snapshots).reply <- fragment
+		end = start
+	}
+	app.WaitUntil(3*time.Second, func() bool { return s.stream.verified })
+	app.WaitFor("text:Final reply", 3*time.Second)
+	app.Post(s.persistSnapshot)
+	var offline Object
+	app.WaitUntil(5*time.Second, func() bool {
+		tail, err := dao.ReadPage(ctx, key, persistence.PageQuery{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		offline = tail.View()
+		return tail.Before != nil && tail.End.Item == 204
+	})
+	if str(offline, "nextCursor") != "before-history" {
+		t.Fatalf("lost prior paging boundary: %v", offline["nextCursor"])
+	}
+	// Navigate out and back offline so entry reads the initial 50 rows and
+	// viewport fill has to recover the earlier bubbles from the database.
+	app.Post(func() {
+		s.devices = []Object{{"id": key.Env, "connected": false}}
+		s.selectSession(Object{"id": "away", "providerId": key.Provider})
+	})
+	app.WaitUntil(3*time.Second, func() bool { return str(s.selected, "id") == "away" })
+	app.Post(func() { s.selectSession(Object{"id": key.ID, "providerId": key.Provider}) })
+	app.WaitFor("text:Original request", 5*time.Second)
+	app.Find("text:A follow-up")
+	app.Find("text:Final reply")
+	app.Find("text:Previous reply")
+	if api.reads.Load() != 5 {
+		t.Fatalf("offline reopening or gap repair requested extra pages: %d", api.reads.Load())
+	}
+}
+
+type historyStreamFixture struct {
+	*independentStreamAPI
+	persistence.HistoryDAO
+}
+
+func (f *historyStreamFixture) Call(ctx context.Context, method string, p Object, target string, r Object) (any, error) {
+	if method == "client.call" && str(r, "method") == "transcript" {
+		if !flag(r, "fresh") {
+			// Hold viewport prefetch at the older conversation boundary.
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}
+		if number(r, "historyItems") != persistence.PageSize {
+			return nil, errors.New("expected an item-bounded history read")
+		}
+	}
+	return f.independentStreamAPI.Call(ctx, method, p, target, r)
 }

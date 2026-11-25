@@ -101,7 +101,7 @@ func (s *State) dialogView(cx *core.Scope, kind string) core.Node {
 	cancelButton.Children = []core.Node{dynamicText(cx, func() string { return choose(pending(), "关闭", "取消") }, 13, false)}
 	footer := []core.Node{cancelButton}
 	field := func(id, placeholder string, value *core.Signal[string], masked bool) core.Node {
-		return ui.Input{TestID: id, Placeholder: placeholder, Label: placeholder, Value: value.Get, OnChange: value.Set, Disabled: pending, Masked: masked, Style: core.Style{MinHeight: core.Pt(40), FontSize: 13}}
+		return formInput{TestID: id, Placeholder: placeholder, Label: placeholder, Value: value.Get, OnChange: value.Set, Disabled: pending, Masked: masked, Style: core.Style{MinHeight: core.Pt(40), FontSize: 13}}
 	}
 	d := ui.Dialog{TestID: "dialog-" + strings.Split(kind, ":")[0], Open: func() bool { return true }, OnOpenChange: func(v bool, _ base.Reason) {
 		if !v {
@@ -122,7 +122,7 @@ func (s *State) dialogView(cx *core.Scope, kind string) core.Node {
 		initial, _ := json.MarshalIndent(def, "", "  ")
 		id := core.NewSignal(cx, idValue)
 		settings := core.NewSignal(cx, string(initial))
-		children = append(children, label(cx, "Agent 在这台电脑上运行。先安装并登录对应 CLI；参数为 JSON 数组，每个元素是一个原样参数。", 13, true), field("agent-id", "Agent ID（如 my-agent）", id, false), core.Input{TestID: "agent-settings", Disabled: pending, Label: "Agent 配置 JSON", Value: settings.Get, OnChange: settings.Set, Multiline: true, Style: core.Style{Height: core.Pt(230), FontSize: 12}, StyleFunc: func() core.Style { return textInputStyle(cx) }}, label(cx, "支持 acp 和 pi。保存后重启 ReignHub 生效。环境变量只保存在本机，不会同步给控制端。", 12, true))
+		children = append(children, label(cx, "Agent 在这台电脑上运行。先安装并登录对应 CLI；参数为 JSON 数组，每个元素是一个原样参数。", 13, true), field("agent-id", "Agent ID（如 my-agent）", id, false), editorInput{TestID: "agent-settings", Disabled: pending, Label: "Agent 配置 JSON", Value: settings.Get, OnChange: settings.Set, Multiline: true, Style: core.Style{Height: core.Pt(230), FontSize: 12}, StyleFunc: func() core.Style { return textInputStyle(cx) }}, label(cx, "支持 acp 和 pi。保存后重启 ReignHub 生效。环境变量只保存在本机，不会同步给控制端。", 12, true))
 		footer = append(footer, s.actionButton(cx, "save-agent", "保存配置", nil, "primary", func() {
 			var value Object
 			if err := json.Unmarshal([]byte(settings.Get()), &value); err != nil {
@@ -276,11 +276,11 @@ func (s *State) dialogView(cx *core.Scope, kind string) core.Node {
 		}
 		children = append(children, label(cx, "扫码后仍需主机确认或密码授权。", 12, true), s.copyButton(cx, "copy-pairing", "复制连接信息", "outline", func() string { return code }))
 		footer = []core.Node{button(cx, "dialog-done", "完成", nil, "primary", close)}
-	case strings.HasPrefix(kind, "activate:"):
-		provider := strings.TrimPrefix(kind, "activate:")
+	case strings.HasPrefix(kind, "activate:") || strings.HasPrefix(kind, "restart-session-codex:"):
+		sessionID, sessionRestart := strings.CutPrefix(kind, "restart-session-codex:")
 		var p Object
 		for _, v := range s.localProviders {
-			if str(v, "id") == provider {
+			if str(v, "id") == "codex-app" {
 				p = v
 				break
 			}
@@ -293,6 +293,11 @@ func (s *State) dialogView(cx *core.Scope, kind string) core.Node {
 		}
 		children = append(children, label(cx, confirm, 13, false))
 		footer = append(footer, s.actionButton(cx, "confirm-activate", title, nil, "primary", func() {
+			if sessionRestart {
+				close()
+				s.confirmSessionCodexRestart(sessionID, p)
+				return
+			}
 			s.activateCodex("confirm-activate", p, true, close)
 		}))
 	case kind == "local-access":
@@ -427,6 +432,7 @@ func (s *State) dialogView(cx *core.Scope, kind string) core.Node {
 					s.selectDevice("")
 				}
 				s.forgetDeviceTerminals(id)
+				s.forgetDevicePermissions(id)
 				for key, d := range s.drafts {
 					if strings.HasPrefix(key, id+"|") {
 						for _, u := range d.Uploads {
@@ -623,10 +629,11 @@ func (s *State) imagePreview(cx *core.Scope, close func()) core.Node {
 			return nil
 		}
 		a := s.preview[index.Get()]
-		key := s.key() + "|" + str(a, "id")
+		originalKey := s.imageKey(a, false)
+		thumbnailKey := s.imageKey(a, true)
 		data, _ := a["localData"].([]byte)
 		if len(data) == 0 {
-			data = s.images[key+"|false"]
+			data = s.images[originalKey]
 		}
 		original := core.NewSignalFunc(cx, data, nil)
 		failure := core.NewSignal(cx, "")
@@ -646,7 +653,7 @@ func (s *State) imagePreview(cx *core.Scope, close func()) core.Node {
 						return
 					}
 					original.Set(b)
-					s.cacheImage(key+"|false", b)
+					s.cacheImage(originalKey, b)
 				})
 			}()
 		}
@@ -658,7 +665,7 @@ func (s *State) imagePreview(cx *core.Scope, close func()) core.Node {
 				return core.ImageSource{Data: b}
 			}
 			s.read()
-			return core.ImageSource{Data: s.images[key+"|true"]}
+			return core.ImageSource{Data: s.images[thumbnailKey]}
 		}, ResizeMode: core.Contain, Style: fill.Merge(core.Style{AlignSelf: core.AlignStretch})}
 		status := core.Dynamic(func(cx *core.Scope) core.Node {
 			if msg := failure.Get(); msg != "" {
@@ -684,6 +691,7 @@ func (s *State) imagePreview(cx *core.Scope, close func()) core.Node {
 }
 
 func (s *State) scanPhoto(cx *core.Scope, done func(string)) {
+	l := locales.For(cx)
 	accept := func(files []core.PickedFile) {
 		if len(files) == 0 {
 			done("")
@@ -693,13 +701,13 @@ func (s *State) scanPhoto(cx *core.Scope, done func(string)) {
 		go func() {
 			img, _, e := image.Decode(bytes.NewReader(data))
 			if e != nil {
-				cx.Post(func() { done("无法读取二维码图片") })
+				cx.Post(func() { done(l.ScanImageUnreadable()) })
 				return
 			}
 			codes, e := goqr.Recognize(img)
 			cx.Post(func() {
 				if e != nil || len(codes) == 0 {
-					done("没有识别到设备二维码")
+					done(l.ScanNoCode())
 					return
 				}
 				for _, c := range codes {
@@ -707,7 +715,7 @@ func (s *State) scanPhoto(cx *core.Scope, done func(string)) {
 						return
 					}
 				}
-				done("不是 ReignHub 设备二维码")
+				done(l.ScanWrongCode())
 			})
 		}()
 	}

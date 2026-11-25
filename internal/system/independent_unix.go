@@ -1,4 +1,4 @@
-//go:build !windows
+//go:build unix
 
 package system
 
@@ -7,8 +7,7 @@ import (
 	"syscall"
 )
 
-// IndependentAgentProcess is only for official Agent runtimes that must outlive
-// Agent Hub. It is never used to launch a Hub helper.
+// IndependentAgentProcess isolates a desktop-owned backend from the GUI session.
 func IndependentAgentProcess(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 }

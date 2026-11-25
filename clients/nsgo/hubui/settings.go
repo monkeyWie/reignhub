@@ -46,7 +46,7 @@ func (s *State) preferences(cx *core.Scope, initial string) core.Node {
 	sidebar := func(cx *core.Scope) core.Node {
 		children := []core.Node{row(heading(cx, "设置", "让工作区更适合你"), spacer(), core.Show{When: narrow.Get, Then: func(cx *core.Scope) core.Node {
 			return labelledIconButton(cx, "settings-close", "关闭设置", lucide.X, close)
-		}}), ui.Input{TestID: "settings-search", Placeholder: "搜索设置", Label: "搜索设置", Value: search.Get, OnChange: search.Set, Style: core.Style{MinHeight: core.Pt(40)}}, label(cx, "工作区", 11, true)}
+		}}), formInput{TestID: "settings-search", Placeholder: "搜索设置", Label: "搜索设置", Value: search.Get, OnChange: search.Set, Style: core.Style{MinHeight: core.Pt(40)}}, label(cx, "工作区", 11, true)}
 		for _, entry := range settingsSections {
 			item := entry
 			children = append(children, core.Show{When: func() bool {

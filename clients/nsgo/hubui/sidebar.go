@@ -14,6 +14,10 @@ import (
 	"github.com/nsgo-dev/nsgo/ui"
 )
 
+// Center a 30-point action in the same column as the footer's 40-point button
+// (12-point footer inset, 8-point row inset).
+const sidebarRowActionRight core.Points = 9
+
 func (s *State) manageDevice(id string) {
 	s.deviceMenuTarget = id
 	if id == control.LocalTarget {
@@ -25,7 +29,7 @@ func (s *State) manageDevice(id string) {
 func (s *State) sidebarDevices(cx *core.Scope) core.Node {
 	return core.View{Style: core.Style{Padding: core.Symmetric(10, 12), Gap: 4}, Children: []core.Node{
 		core.Show{When: func() bool { return !s.inlineSidebarHeading(cx) }, Then: func(cx *core.Scope) core.Node {
-			return row(s.brand(cx, 18, true), spacer(), s.addDeviceButton(cx), core.Show{When: s.narrowLayout, Then: func(cx *core.Scope) core.Node {
+			return row(s.brand(cx, 18, true), spacer(), s.addDeviceButton(cx), core.Show{When: func() bool { return !s.mobileClient && s.narrowLayout() }, Then: func(cx *core.Scope) core.Node {
 				v := labelledIconButton(cx, "close-mobile-sidebar", locales.For(cx).HideSidebar(), lucide.PanelLeftClose, s.closeMobileSidebar).(core.View)
 				v.Style.Width, v.Style.Height, v.Style.MinHeight = core.Pt(44), core.Pt(44), core.Pt(44)
 				return v
@@ -111,7 +115,7 @@ func (s *State) directory(cx *core.Scope) core.Node {
 		core.View{TestID: "sidebar-footer", Style: core.Style{Padding: core.Symmetric(8, 12)}, Children: []core.Node{row(
 			s.sidebarMenu(cx), spacer(),
 			core.Show{When: func() bool { return isMobile(cx) }, Then: func(cx *core.Scope) core.Node {
-				return sidebarIconButton(cx, "scan-qr", "扫描二维码", lucide.ScanLine, func() { s.scan(cx) })
+				return sidebarIconButton(cx, "scan-qr", locales.For(cx).ScanDeviceCode(), lucide.ScanLine, func() { s.scan(cx) })
 			}},
 			sidebarIconButton(cx, "new-session", locales.For(cx).NewSession(), lucide.SquarePen, func() { s.openSessionCreation(nil) }),
 		)}},
@@ -170,7 +174,7 @@ func (s *State) treeHeader(cx *core.Scope, item func() directoryRow, brake *list
 			core.Show{When: func() bool { return cx.Env().Desktop() && !filtersOpen.Get() && unread() }, Then: func(cx *core.Scope) core.Node {
 				hidden := &core.Style{Opacity: core.Alpha(0)}
 				return core.View{TestID: data.ID + "-status", PointerEvents: core.PointerEventsNone,
-					Style: core.Style{Position: core.Absolute, Right: core.Pt(0), Top: core.Pt(0), Bottom: core.Pt(0), Width: core.Pt(32),
+					Style: core.Style{Position: core.Absolute, Right: core.Pt(0), Top: core.Pt(0), Bottom: core.Pt(0), Width: core.Pt(40),
 						AlignItems: core.AlignCenter, JustifyContent: core.JustifyCenter,
 						GroupStyle: &core.GroupStyle{Name: "directory-section", Hover: hidden, FocusWithin: hidden}},
 					Children: []core.Node{unreadDot(cx, data.ID, locales.For(cx).SessionCompletedUnread())}}
@@ -215,7 +219,7 @@ func (s *State) treeHeader(cx *core.Scope, item func() directoryRow, brake *list
 			}},
 			singleLine(cx, func() string { return item().Title }, 12, true),
 		}}
-	status := core.View{PointerEvents: core.PointerEventsNone, Style: core.Style{Position: core.Absolute, Right: core.Pt(2), Top: core.Pt(0), Bottom: core.Pt(0), Width: core.Pt(30), AlignItems: core.AlignCenter, JustifyContent: core.JustifyCenter}, StyleFunc: func() core.Style {
+	status := core.View{PointerEvents: core.PointerEventsNone, Style: core.Style{Position: core.Absolute, Right: core.Pt(choose(cx.Env().Desktop(), sidebarRowActionRight, 2)), Top: core.Pt(0), Bottom: core.Pt(0), Width: core.Pt(30), AlignItems: core.AlignCenter, JustifyContent: core.JustifyCenter}, StyleFunc: func() core.Style {
 		if data.Kind == "project" && cx.Env().Desktop() {
 			hidden := &core.Style{Opacity: core.Alpha(0), PointerEvents: core.PointerEventsNone}
 			return core.Style{GroupStyle: &core.GroupStyle{Name: "directory-group", Hover: hidden, FocusWithin: hidden}}
@@ -229,7 +233,7 @@ func (s *State) treeHeader(cx *core.Scope, item func() directoryRow, brake *list
 		create := func() { project := item(); s.openSessionCreation(&project) }
 		menu = append(menu, ui.MenuItem{TestID: "project-create-action", Text: locales.For(cx).NewSession(), Icon: lucide.SquarePen, OnSelect: create})
 		children = append(children, core.Show{When: func() bool { return cx.Env().Desktop() }, Then: func(cx *core.Scope) core.Node {
-			return core.View{TestID: "actions-" + data.ID, Style: core.Style{Position: core.Absolute, Top: core.Pt(0), Bottom: core.Pt(0), Right: core.Pt(2), JustifyContent: core.JustifyCenter},
+			return core.View{TestID: "actions-" + data.ID, Style: core.Style{Position: core.Absolute, Top: core.Pt(0), Bottom: core.Pt(0), Right: core.Pt(sidebarRowActionRight), JustifyContent: core.JustifyCenter},
 				OnMouseEnter: func(core.MouseEvent) { actionsHover.Set(true); tipOpen.Set(false) }, OnMouseLeave: func(core.MouseEvent) { actionsHover.Set(false) },
 				StyleFunc: func() core.Style { return contextualAffordance(cx, "directory-group", false) },
 				Children:  []core.Node{contextualIconButton(cx, "create-"+data.ID, locales.For(cx).NewSession(), lucide.SquarePen, create)}}
@@ -270,15 +274,47 @@ func (s *State) sessionRow(cx *core.Scope, item func() directoryRow, brake *list
 	actionsHover := core.NewSignal(cx, false)
 	tipOpen := core.NewSignal(cx, false)
 	tip := s.sessionTooltip(cx, item)
+	recovery := core.NewMemo(cx, func() bool { s.read(); return s.codexRecoveryIssue(item().Session) })
+	recoveryOpen := core.NewSignal(cx, false)
 	tip.Open = func() bool {
 		s.read()
-		return tipOpen.Get() && !menuOpen.Get() && !actionsHover.Get() && s.pinDrag == nil
+		return tipOpen.Get() && !menuOpen.Get() && !actionsHover.Get() && !recoveryOpen.Get() && s.pinDrag == nil
 	}
 	tip.OnOpenChange = func(open bool, _ base.Reason) { tipOpen.Set(open && !menuOpen.GetUntracked()) }
+	body := core.View{TestID: id, Ref: ref, OnPan: pan, PanActivation: core.PanActivation{ActiveOffsetY: 7, FailOffsetX: 50}, Role: core.RoleButton, LabelFunc: func() string {
+		v := item()
+		return v.Title + " · " + s.environmentName(str(v.Session, "deviceId")) + " · " + s.providerName(str(v.Session, "deviceId"), str(v.Session, "providerId")) + " · " + s.sessionStatusLabel(v.Session)
+	}, OnPress: func(core.PressEvent) { brake.action(func() { s.selectSession(item().Session) })() }, Style: core.Style{FlexGrow: 1, FlexShrink: 1, MinWidth: core.Pt(0), Padding: core.Edges{Top: 9, Bottom: 9, Left: 7, Right: 70}, Gap: 5, CornerRadius: 9}, StyleFunc: func() core.Style {
+		st := pressStyle(cx)
+		if cx.Env().Desktop() && recovery.Get() {
+			st.Padding = core.Edges{Top: 9, Bottom: 9, Left: 7, Right: 100}
+		}
+		if data.Section == "pinned" && cx.Env().Desktop() {
+			s.read()
+			if s.pinDrag != nil && s.pinDrag.source == sessionIdentity(ss) {
+				st.Opacity = core.Alpha(.55)
+			}
+		}
+		return st
+	}, Tooltip: tip, Children: []core.Node{
+		singleLine(cx, func() string {
+			v := item().Title
+			if v == "" {
+				return locales.For(s.cx).UnnamedSession()
+			}
+			return v
+		}, 13, false),
+		row(glyph(cx, sessionIcon(ss), 12), singleLine(cx, func() string {
+			s.read()
+			v := item().Session
+			return s.environmentName(str(v, "deviceId"))
+		}, 11, true)),
+	}}
 	return ui.ContextMenu{TestID: "menu-" + id, Open: menuOpen.Get, OnOpenChange: func(open bool, _ base.Reason) {
 		menuOpen.Set(open)
 		if open {
 			tipOpen.Set(false)
+			recoveryOpen.Set(false)
 		}
 	}, Children: []core.Node{s.pinOrderMenu(cx, item), core.Dynamic(func(cx *core.Scope) core.Node {
 		pinned := pin.Get()
@@ -290,39 +326,17 @@ func (s *State) sessionRow(cx *core.Scope, item func() directoryRow, brake *list
 		}
 		return st
 	}, Children: []core.Node{
-		core.View{TestID: id, Ref: ref, OnPan: pan, PanActivation: core.PanActivation{ActiveOffsetY: 7, FailOffsetX: 50}, Role: core.RoleButton, LabelFunc: func() string {
-			v := item()
-			return v.Title + " · " + s.environmentName(str(v.Session, "deviceId")) + " · " + s.providerName(str(v.Session, "deviceId"), str(v.Session, "providerId")) + " · " + s.sessionStatusLabel(v.Session)
-		}, OnPress: func(core.PressEvent) { brake.action(func() { s.selectSession(item().Session) })() }, Style: core.Style{FlexGrow: 1, FlexShrink: 1, MinWidth: core.Pt(0), Padding: core.Edges{Top: 9, Bottom: 9, Left: 7, Right: 70}, Gap: 5, CornerRadius: 9}, StyleFunc: func() core.Style {
-			st := pressStyle(cx)
-			if data.Section == "pinned" && cx.Env().Desktop() {
-				s.read()
-				if s.pinDrag != nil && s.pinDrag.source == sessionIdentity(ss) {
-					st.Opacity = core.Alpha(.55)
-				}
-			}
-			return st
-		}, Tooltip: tip, Children: []core.Node{
-			singleLine(cx, func() string {
-				v := item().Title
-				if v == "" {
-					return locales.For(s.cx).UnnamedSession()
-				}
-				return v
-			}, 13, false),
-			row(glyph(cx, sessionIcon(ss), 12), singleLine(cx, func() string {
-				s.read()
-				v := item().Session
-				return s.environmentName(str(v, "deviceId"))
-			}, 11, true)),
-		}},
-		s.sessionStatusIndicator(cx, id, item),
+		body,
 		s.pinnedDropMarker(cx, sessionIdentity(ss)),
 		core.Show{When: func() bool { return cx.Env().Desktop() }, Then: func(cx *core.Scope) core.Node {
-			return core.View{TestID: "actions-" + id, Style: core.Style{Position: core.Absolute, Top: core.Pt(4), Right: core.Pt(4), Direction: core.Row, AlignItems: core.AlignCenter, CornerRadius: 7},
+			return core.View{TestID: "actions-" + id, Style: core.Style{Position: core.Absolute, Top: core.Pt(4), Right: core.Pt(sidebarRowActionRight), Direction: core.Row, AlignItems: core.AlignCenter, CornerRadius: 7},
 				OnMouseEnter: func(core.MouseEvent) { actionsHover.Set(true) }, OnMouseLeave: func(core.MouseEvent) { actionsHover.Set(false) },
 				StyleFunc: func() core.Style {
-					return contextualAffordance(cx, "session-row", false)
+					st := contextualAffordance(cx, "session-row", false)
+					if recovery.Get() {
+						st.Right = core.Pt(sidebarRowActionRight + 30)
+					}
+					return st
 				},
 				Children: []core.Node{
 					core.Dynamic(func(cx *core.Scope) core.Node {
@@ -332,6 +346,12 @@ func (s *State) sessionRow(cx *core.Scope, item func() directoryRow, brake *list
 					contextualIconButton(cx, "remove-"+id, locales.For(cx).RemoveSession(), lucide.Archive, func() { s.requestSessionRemoval(item().Session) }),
 				}}
 		}},
+		core.Show{When: recovery.Get, Then: func(cx *core.Scope) core.Node {
+			cx.Cleanup(func() { recoveryOpen.Set(false) })
+			return core.View{Style: core.Style{Position: core.Absolute, Top: core.Pt(4), Right: core.Pt(choose(cx.Env().Desktop(), sidebarRowActionRight, 4))}, Children: []core.Node{
+				s.codexRecoveryCard(cx, id, item, recoveryOpen, menuOpen.Get, codexWarningIcon(cx, id)),
+			}}
+		}, Else: func(cx *core.Scope) core.Node { return s.sessionStatusIndicator(cx, id, item) }},
 	}}}
 
 }
