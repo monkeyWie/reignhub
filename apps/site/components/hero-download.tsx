@@ -74,7 +74,7 @@ export function HeroDownload() {
       {asset && (
         <a href={asset.url} className="button primary hero-download">
           <Download size={16} />
-          {t("下载")} {names[asset.platform]}{" "}
+          {t("下载 {platform} 版").replace("{platform}", names[asset.platform])}{" "}
           <small>
             {asset.format === "ipa" ? t("未签名 IPA") : asset.architecture} ·{" "}
             {formatAssetSize(asset.size)}

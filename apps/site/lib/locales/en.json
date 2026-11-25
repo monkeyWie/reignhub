@@ -143,6 +143,7 @@
   "技术栈": "Technology",
   "价格": "Pricing",
   "下载": "Downloads",
+  "下载 {platform} 版": "Download for {platform}",
   "文档": "Docs",
   "快速开始": "Quick start",
   "Agent 接入": "Agent integration",
