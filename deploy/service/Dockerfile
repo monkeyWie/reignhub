@@ -5,7 +5,7 @@ COPY --from=go-toolchain /usr/local/go /usr/local/go
 COPY --from=go-toolchain /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 ENV PATH="/usr/local/go/bin:${PATH}"
 WORKDIR /src
-COPY go.mod go.sum ./
+COPY go.mod go.sum LICENSE ./
 COPY internal ./internal
 COPY pkg ./pkg
 COPY cmd/reignhub-server ./cmd/reignhub-server
