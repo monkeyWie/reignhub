@@ -21,8 +21,8 @@ export function WorkspaceDemo({ locale }: { locale: Locale }) {
               />
               <img
                 src={base + "light.webp"}
-                width={phone ? 1206 : 2020}
-                height={phone ? 2622 : 1220}
+                width={phone ? 1206 : 2160}
+                height={phone ? 2622 : 1620}
                 alt={
                   phone
                     ? t(

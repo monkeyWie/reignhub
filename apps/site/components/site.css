@@ -1,5 +1,5 @@
 .site-shell {
-  --site-green: #16805d;
+  --site-green: var(--fg);
   --site-soft: #f5f7f6;
   font-size: 14px;
   overflow-x: clip;
@@ -89,9 +89,9 @@
   height: 6px;
   flex-shrink: 0;
   border-radius: 100%;
-  background: var(--site-green, #16805d);
+  background: #79c476;
   box-shadow: 0 0 0 3px
-    color-mix(in srgb, var(--site-green, #16805d) 10%, transparent);
+    color-mix(in srgb, var(--site-green, #79c476) 10%, transparent);
 }
 .home-hero {
   display: grid;
@@ -1258,12 +1258,12 @@
 }
 @media (prefers-color-scheme: dark) {
   :root:not(.light) .site-shell {
-    --site-green: #7fc6a6;
+    --site-green: var(--fg);
     --site-soft: #202523;
   }
 }
 .dark .site-shell {
-  --site-green: #7fc6a6;
+  --site-green: var(--fg);
   --site-soft: #202523;
 }
 @media (max-width: 1050px) {
@@ -2079,4 +2079,26 @@
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .site-shell .button,
+  .site-shell .site-nav a,
+  .site-shell .site-text-link svg,
+  .site-shell .story-copy a svg {
+    transition:
+      transform 0.18s ease,
+      background-color 0.18s ease,
+      color 0.18s ease;
+  }
+  .site-shell .button:hover {
+    transform: translateY(-1px);
+  }
+  .site-shell .button:active {
+    transform: translateY(1px);
+  }
+  .site-shell .site-text-link:hover svg,
+  .site-shell .story-copy a:hover svg {
+    transform: translateX(3px);
+  }
 }

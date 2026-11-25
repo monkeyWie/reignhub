@@ -19,7 +19,7 @@ export function getMDXComponents(
       props: Omit<ComponentProps<typeof ArchitectureDiagram>, "locale">,
     ) => <ArchitectureDiagram {...props} locale={locale} />,
     a: ({ href, ...props }: ComponentProps<"a">) =>
-      href && /^\/chat(?:[/?#]|$)/.test(href) ? (
+      href && /^\/(?:web|chat)(?:[/?#]|$)/.test(href) ? (
         <a {...props} href={href} />
       ) : (
         <Anchor {...props} href={href ? localizeHref(href, locale) : href} />

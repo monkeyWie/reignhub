@@ -11,7 +11,7 @@
     "directory": ".open-next/assets",
     "binding": "ASSETS",
     "html_handling": "none",
-    "run_worker_first": ["/chat", "/chat/", "/p2p/*", "/api/*"],
+    "run_worker_first": ["/web", "/web/", "/chat", "/chat/", "/p2p/*", "/api/*"],
   },
   "d1_databases": [
     {

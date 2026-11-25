@@ -209,11 +209,11 @@ export async function smokeSite(origin: string) {
     if (path.includes("/docs"))
       assert.ok(serialized.includes(path), `Search index missing ${path}`);
   }
-  for (const path of ["/chat", "/account", "/admin"]) {
+  for (const path of ["/web", "/chat", "/account", "/admin"]) {
     const html = await (await fetch(origin + path)).text();
     assert.match(html, /name="robots" content="noindex, nofollow"/, path);
   }
-  const consoleResponse = await fetch(origin + "/chat");
+  const consoleResponse = await fetch(origin + "/web");
   const consoleHTML = await consoleResponse.text();
   assert.doesNotMatch(consoleHTML, /_next\/|__next_f/);
   assert.match(consoleHTML, /DecompressionStream/);
@@ -240,7 +240,7 @@ export async function smokeSite(origin: string) {
   const moduleBytes = gunzipSync(compressed);
   assert.equal(moduleBytes.subarray(0, 4).toString("hex"), "0061736d");
   const robots = await (await fetch(origin + "/robots.txt")).text();
-  for (const path of ["/chat", "/account", "/admin", "/api/", "/p2p/"])
+  for (const path of ["/web", "/chat", "/account", "/admin", "/api/", "/p2p/"])
     assert.ok(robots.includes(`Disallow: ${path}`));
   const sitemap = await (await fetch(origin + "/sitemap.xml")).text();
   assert.doesNotMatch(sitemap, /<loc>[^<]*\/en(?:\/|<)/);

@@ -78,7 +78,7 @@ export function PricingCards() {
                 "这套开源部署不启用商业账号或套餐限制，可以直接连接自己的设备。",
               )}
             </p>
-            <Link className="button primary" href="/chat">
+            <Link className="button primary" href="/web">
               {t("打开控制台")}
               <ArrowUpRight size={15} />
             </Link>

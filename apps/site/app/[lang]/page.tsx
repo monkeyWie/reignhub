@@ -7,12 +7,9 @@ import {
   ArrowUpRight,
   Cloud,
   Download,
-  LockKeyhole,
-  Monitor,
   Server,
-  Smartphone,
-  Terminal,
 } from "lucide-react";
+import { WorkspaceStories } from "../../components/workspace-stories";
 import { WorkspaceDemo } from "../../components/workspace-demo";
 import { SiteShell } from "../../components/site";
 import { PlatformIcon } from "../../components/platform-icon";
@@ -61,7 +58,7 @@ export default async function Home({
                   <Download size={16} />
                   {t("下载 ReignHub")}
                 </Link>
-                <Link className="atlas-inline" href="/chat">
+                <Link className="atlas-inline" href="/web">
                   {t("在浏览器打开")}
                   <ArrowUpRight size={16} />
                 </Link>
@@ -84,7 +81,7 @@ export default async function Home({
               ["web", "Web"],
             ] as const
           ).map(([id, label]) => (
-            <Link key={id} href={id === "web" ? "/chat" : `/download#${id}`}>
+            <Link key={id} href={id === "web" ? "/web" : `/download#${id}`}>
               <PlatformIcon platform={id} size={19} />
               {label}
             </Link>
@@ -92,56 +89,7 @@ export default async function Home({
         </nav>
         <section className="atlas-work site-width">
           <h2>{t("离开电脑，工作继续。")}</h2>
-          <div className="atlas-cards">
-            <Link className="atlas-feature" href="/docs/guides/terminal">
-              <div className="atlas-terminal" aria-hidden="true">
-                <span>
-                  <Terminal size={15} /> atlas <i>zsh</i>
-                </span>
-                <code>
-                  <em>~/atlas</em> $ pnpm test
-                  <br />
-                  <b>✓</b> search.test.ts
-                  <br />
-                  <b>✓</b> auth.test.ts
-                  <br />
-                  <br />
-                  <b>Tests</b>　12 passed
-                </code>
-              </div>
-              <h3>
-                {t("远程终端")}
-                <ArrowUpRight />
-              </h3>
-              <p>
-                {t("在项目目录打开 Shell。换一台设备，也能接着看命令输出。")}
-              </p>
-            </Link>
-            <Link className="atlas-feature" href="/docs/guides/connections">
-              <div className="atlas-network" aria-hidden="true">
-                <span>
-                  <Monitor />
-                </span>
-                <i />
-                <b>
-                  <LockKeyhole size={16} />
-                </b>
-                <i />
-                <span>
-                  <Smartphone />
-                </span>
-              </div>
-              <h3>
-                {t("设备之间，端到端加密。")}
-                <ArrowUpRight />
-              </h3>
-              <p>
-                {t(
-                  "设备优先直连。需要中继时，会话内容和附件仍然只有配对设备能读取。",
-                )}
-              </p>
-            </Link>
-          </div>
+          <WorkspaceStories locale={lang} />
         </section>
         <section className="access-host site-width">
           <div>

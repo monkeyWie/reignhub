@@ -96,7 +96,7 @@
   left: 0;
   width: 100%;
   height: 3px;
-  background: #16805d;
+  background: #79c476;
 }
 #nprogress .peg {
   display: block;
@@ -105,8 +105,8 @@
   width: 100px;
   height: 100%;
   box-shadow:
-    0 0 10px #16805d,
-    0 0 5px #16805d;
+    0 0 10px #79c476,
+    0 0 5px #79c476;
   opacity: 1;
   transform: rotate(3deg) translateY(-4px);
 }

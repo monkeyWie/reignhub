@@ -13,12 +13,12 @@ type colorScheme struct {
 var lightColors = colorScheme{
 	canvas: 0xfafafa, sidebar: 0xfafafa, page: 0xffffff, elevated: 0xffffff,
 	muted: 0xf4f4f5, selected: 0xf4f4f5, border: 0xe4e4e7,
-	text: 0x09090b, secondary: 0x71717a, brand: 0x16805d, brandText: 0xffffff, code: 0xf4f4f5,
+	text: 0x09090b, secondary: 0x71717a, brand: 0x79c476, brandText: 0x102610, code: 0xf4f4f5,
 }
 var darkColors = colorScheme{
 	canvas: 0x09090b, sidebar: 0x18181b, page: 0x09090b, elevated: 0x18181b,
 	muted: 0x27272a, selected: 0x27272a, border: 0x27272a,
-	text: 0xfafafa, secondary: 0xa1a1aa, brand: 0x7fc6a6, brandText: 0x09090b, code: 0x18181b,
+	text: 0xfafafa, secondary: 0xa1a1aa, brand: 0x79c476, brandText: 0x09090b, code: 0x18181b,
 }
 
 func schemePalette(c colorScheme, p core.Palette) core.Palette {

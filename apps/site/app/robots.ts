@@ -5,7 +5,7 @@ export default function robots(): MetadataRoute.Robots {
     rules: {
       userAgent: "*",
       allow: "/",
-      disallow: ["/chat", "/account", "/admin", "/api/", "/p2p/"],
+      disallow: ["/web", "/chat", "/account", "/admin", "/api/", "/p2p/"],
     },
     sitemap: siteOrigin ? `${siteOrigin}/sitemap.xml` : undefined,
   };

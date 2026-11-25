@@ -23,7 +23,9 @@ import {
   SiteShell,
 } from "../../../components/site";
 import { PlatformShowcase } from "../../../components/platform-showcase";
-import { ProductPreview } from "../../../components/product-preview";
+import { WorkspaceStories } from "../../../components/workspace-stories";
+import { WorkspaceDemo } from "../../../components/workspace-demo";
+import "../home.css";
 export default async function Features({
   params,
 }: {
@@ -48,7 +50,7 @@ export default async function Features({
           {t("把电脑上的工作带到手边，保留原来的 Agent、模型与项目。")}
         </PageIntro>
         <div className="features-showcase site-width">
-          <ProductPreview />
+          <WorkspaceDemo locale={lang} />
           <div>
             <span className="site-tag available">{t("桌面 · 手机 · Web")}</span>
             <h2>
@@ -67,6 +69,9 @@ export default async function Features({
             </Link>
           </div>
         </div>
+        <section className="site-width">
+          <WorkspaceStories locale={lang} />
+        </section>
         <PlatformShowcase lang={lang} />
         <section className="site-section site-width">
           <div className="feature-detail-grid">

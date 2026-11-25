@@ -129,7 +129,7 @@ export function AccountPage({
         <a className="brand" href="/">
           ♜ ReignHub
         </a>
-        <a href="/chat">返回控制台 ↗</a>
+        <a href="/web">返回控制台 ↗</a>
       </nav>
       {loading ? (
         <p>正在加载账号…</p>
@@ -267,7 +267,7 @@ export function AccountPage({
                   <tr key={d.id}>
                     <td>{d.name}</td>
                     <td>
-                      <a href={"/chat?device=" + d.connectionId}>
+                      <a href={"/web?device=" + d.connectionId}>
                         {d.connectionId} ↗
                       </a>
                     </td>

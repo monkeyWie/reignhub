@@ -25,7 +25,7 @@ export function PlatformShowcase({ lang }: { lang: Locale }) {
         ].map(([platform, name, caption]) => {
           return (
             <Link
-              href={name === "Web" ? "/chat" : "/download"}
+              href={name === "Web" ? "/web" : "/download"}
               className="platform-card"
               key={String(name)}
             >

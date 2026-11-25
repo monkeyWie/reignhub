@@ -1,5 +1,5 @@
 .architecture-diagram {
-  --diagram-accent: #16805d;
+  --diagram-accent: #79c476;
   margin: 28px 0;
   border: 1px solid var(--border, var(--color-fd-border));
   border-radius: 14px;
@@ -65,10 +65,10 @@
   border-top: 1px solid var(--border, var(--color-fd-border));
 }
 .dark .architecture-diagram {
-  --diagram-accent: #7fc6a6;
+  --diagram-accent: #79c476;
 }
 @media (prefers-color-scheme: dark) {
   :root:not(.light) .architecture-diagram {
-    --diagram-accent: #7fc6a6;
+    --diagram-accent: #79c476;
   }
 }

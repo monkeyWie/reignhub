@@ -43,7 +43,7 @@ export default async function DownloadPage({
               )}
             </p>
           </div>
-          <Link className="button primary" href="/chat">
+          <Link className="button primary" href="/web">
             {t("打开 Web 控制台")}
             <ArrowUpRight size={16} />
           </Link>

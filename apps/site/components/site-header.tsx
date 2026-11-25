@@ -60,7 +60,7 @@ export function SiteHeader() {
           >
             {locale === "en" ? "简体中文" : "English"}
           </a>
-          <Link className="site-console-link" href="/chat">
+          <Link className="site-console-link" href="/web">
             {t("控制台")}
             <ArrowUpRight size={14} />
           </Link>
@@ -85,7 +85,7 @@ export function SiteHeader() {
               </Link>
             ))}
             <Link href="/download">{t("下载客户端")}</Link>
-            <Link href="/chat">{t("打开控制台 ↗")}</Link>
+            <Link href="/web">{t("打开控制台 ↗")}</Link>
           </nav>
         </details>
       </div>

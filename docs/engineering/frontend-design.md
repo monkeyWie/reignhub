@@ -19,7 +19,7 @@ Use shadcn zinc neutrals as the default interaction language, with a restrained 
 | Page / foreground                | `#ffffff` / `#09090b` | `#09090b` / `#fafafa` |
 | Muted surface / border           | `#f4f4f5` / `#e4e4e7` | `#27272a` / `#27272a` |
 | Secondary text                   | `#71717a`             | `#a1a1aa`             |
-| Brand accent / accent foreground | `#16805d` / `#ffffff` | `#7fc6a6` / `#09090b` |
+| Brand accent / accent foreground | `#79c476` / `#102610` | `#79c476` / `#09090b` |
 
 The website keeps its own semantic CSS roles within the same neutral/green identity. Reuse spacing, typography and radius tokens; the current base radius is 10. Use Lucide for actions and [shared Simple Icons assets](../../internal/brandicons/README.md) for recognizable platform, Agent and browser brands. Preserve attribution and licenses. Ordinary offline status is not an error alarm.
 

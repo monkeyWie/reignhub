@@ -30,7 +30,7 @@ export function LocalizedLink({
   ...props
 }: ComponentProps<typeof NextLink>) {
   const locale = useLocale();
-  if (typeof href === "string" && /^\/chat(?:[/?#]|$)/.test(href)) {
+  if (typeof href === "string" && /^\/(?:web|chat)(?:[/?#]|$)/.test(href)) {
     const { prefetch, replace, scroll, onNavigate, ...anchor } = props;
     return <a {...anchor} href={href} />;
   }
