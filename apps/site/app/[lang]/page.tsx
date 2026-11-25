@@ -46,14 +46,14 @@ export default async function Home({
         <section className="atlas-hero site-width">
           <div className="atlas-intro">
             <h1>
-              {t("一个工作台，")}
+              {t("电脑上的 Agent，")}
               <br />
-              <em>{t("随处接着做。")}</em>
+              <em>{t("手机上接着聊。")}</em>
             </h1>
             <div className="atlas-pitch">
               <p>
                 {t(
-                  "在电脑上运行 Codex、Claude Code 和 Pi，在手机或浏览器里继续同一个会话。",
+                  "Codex、Claude Code 和 Pi 在你的电脑上运行。出门后，用手机查看进度、补充指令，或打开项目终端。",
                 )}
               </p>
               <div className="site-actions">
@@ -68,7 +68,7 @@ export default async function Home({
               </div>
             </div>
           </div>
-          <WorkspaceDemo />
+          <WorkspaceDemo locale={lang} />
         </section>
         <nav
           className="access-platforms site-width"

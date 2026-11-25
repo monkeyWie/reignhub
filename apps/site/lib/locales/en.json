@@ -370,5 +370,12 @@
   "把这个场景加进测试。": "Add a test for that flow.",
   "整理这次发布的安装步骤。": "Document the installation steps for this release.",
   "安装文档已经按平台列出下载和启动步骤。": "The guide now lists download and launch steps for each platform.",
-  "补上 Linux 的安装示例。": "Add a Linux install example."
+  "补上 Linux 的安装示例。": "Add a Linux install example.",
+  "电脑上的 Agent，": "Agents on your Mac or PC.",
+  "手机上接着聊。": "In reach on your phone.",
+  "Codex、Claude Code 和 Pi 在你的电脑上运行。出门后，用手机查看进度、补充指令，或打开项目终端。": "Run Codex, Claude Code and Pi on your computer. From your phone, check their progress, send a follow-up or open the project terminal.",
+  "iPhone · 远程追问": "iPhone · Remote follow-up",
+  "Mac · Codex 会话": "Mac · Codex session",
+  "在 iPhone 的 ReignHub 会话中追问空结果测试，收到电脑上的 Codex 回复。": "ReignHub on iPhone shows the follow-up about empty search results and the reply from Codex on the Mac.",
+  "Mac 版 ReignHub 正显示同一段 Codex 会话和刚完成的测试结果。": "ReignHub on macOS displays the same Codex conversation and its test results."
 }
