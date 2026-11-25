@@ -3,7 +3,7 @@ import { useState } from "react";
 import {
   Check,
   ChevronDown,
-  Folder,
+  FileCode2,
   GitBranch,
   Laptop,
   LockKeyhole,
@@ -47,68 +47,72 @@ export function WorkspaceDemo() {
   const [index, select] = useState(0);
   const current = sessions[index];
   return (
-    <figure className="atlas-scene">
-      <figcaption>
-        <span>{t("工作台示例")}</span>
+    <figure className="console-case">
+      <figcaption className="console-plate">
+        <strong>
+          <Laptop size={21} />
+          {t("工作台示例")}
+        </strong>
         <span>
-          <LockKeyhole size={13} />
-          {t("端到端加密")}
+          <i className="console-led" />
+          MacBook Pro
         </span>
       </figcaption>
-      <div className="atlas-window">
-        <div className="atlas-title">
-          <strong>♜ ReignHub</strong>
-          <span>
-            <Laptop size={14} /> MacBook Pro
-          </span>
-        </div>
-        <div className="atlas-body">
-          <div className="atlas-sidebar">
-            <b>
-              <Folder size={14} /> atlas <ChevronDown size={12} />
-            </b>
-            <div role="group" aria-label={t("项目会话")}>
-              {sessions.map((s, i) => (
-                <button
-                  key={s.brand}
-                  type="button"
-                  aria-pressed={index === i}
-                  onClick={() => select(i)}
-                >
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path fill="currentColor" d={paths[s.brand]} />
-                  </svg>
-                  <span>
-                    {s.name}
-                    <small>{t(s.title)}</small>
-                  </span>
-                </button>
-              ))}
+      <div className="console-grid">
+        <div className="console-screen" aria-live="polite">
+          <div className="screen-bar">
+            <span>~/atlas</span>
+            <span>
+              <GitBranch size={13} />
+              main
+            </span>
+          </div>
+          <p className="screen-task">{t(current.task)}</p>
+          <strong className="screen-title">{t(current.title)}</strong>
+          <p className="screen-result">{t(current.result)}</p>
+          <details key={current.file} className="console-change">
+            <summary>
+              <FileCode2 size={15} />
+              <code>{current.file}</code>
+              <ChevronDown size={14} />
+            </summary>
+            <div>
+              <Check size={14} />
+              {t("已更新文件")}
             </div>
+          </details>
+        </div>
+        <div className="console-controls">
+          <div className="console-keys" role="group" aria-label={t("项目会话")}>
+            {sessions.map((s, i) => (
+              <button
+                key={s.brand}
+                type="button"
+                aria-pressed={index === i}
+                onClick={() => select(i)}
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path fill="currentColor" d={paths[s.brand]} />
+                </svg>
+                <span>{s.name}</span>
+                <i aria-hidden="true" />
+              </button>
+            ))}
           </div>
-          <div className="atlas-chat" aria-live="polite">
-            <header>
-              <strong>{t(current.title)}</strong>
-              <span>
-                <GitBranch size={12} /> main
-              </span>
-            </header>
-            <div className="atlas-user">{t(current.task)}</div>
-            <b className="atlas-agent">{current.name}</b>
-            <p>{t(current.result)}</p>
-            <code>
-              <Check size={13} /> {current.file}
-            </code>
+          <div className="console-reply" aria-live="polite">
+            <div>
+              <Smartphone size={15} />
+              {t("来自手机")}
+              <time>14:32</time>
+            </div>
+            <p>{t(current.follow)}</p>
+          </div>
+          <div className="console-route">
+            <LockKeyhole size={13} />
+            {t("端到端加密")}
+            <span aria-hidden="true" />
           </div>
         </div>
-      </div>
-      <div className="atlas-phone">
-        <span>
-          <Smartphone size={14} />
-          {t("来自手机")}
-          <time>14:32</time>
-        </span>
-        <p>{t(current.follow)}</p>
       </div>
     </figure>
   );
