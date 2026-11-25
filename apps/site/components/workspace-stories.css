@@ -133,3 +133,44 @@
     margin: 9px 0 12px;
   }
 }
+.story-session img,
+.story-term-shot img {
+  width: 100%;
+  height: auto;
+  display: block;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 8px 22px #0001;
+}
+.story-pair,
+.story-deploy {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(12px, 3vw, 44px);
+  min-height: 210px;
+  border-block: 1px solid var(--border);
+}
+.story-pair img {
+  background: white;
+  padding: 6px;
+  border-radius: 5px;
+}
+.story-pair small,
+.story-pair strong {
+  display: block;
+}
+.story-pair strong {
+  font:
+    500 clamp(23px, 3vw, 42px)/1.3 ui-monospace,
+    monospace;
+  letter-spacing: -0.04em;
+}
+.story-pair small,
+.story-copy .secondary-guide {
+  color: var(--muted);
+  font-size: 12px;
+}
+.story-copy .secondary-guide {
+  margin-top: 12px;
+}

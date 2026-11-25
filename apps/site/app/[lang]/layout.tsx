@@ -20,6 +20,14 @@ export default async function RootLayout({
   if (!isLocale(lang)) notFound();
   return (
     <html lang={lang} suppressHydrationWarning>
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html:
+              "try{const t=localStorage.getItem('theme');if(t==='dark'||t==='light'){document.documentElement.classList.add(t);document.documentElement.style.colorScheme=t}}catch{}",
+          }}
+        />
+      </head>
       <body>
         <NavigationProgress />
         <LocaleProvider locale={lang}>{children}</LocaleProvider>

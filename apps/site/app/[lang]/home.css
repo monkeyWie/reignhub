@@ -46,9 +46,6 @@
   gap: 18px;
 }
 .atlas-inline,
-.access-platforms a,
-.access-host-links a,
-.atlas-terminal span,
 .shot-label {
   display: flex;
   align-items: center;
@@ -70,7 +67,6 @@
   margin: 0;
   padding: 26px 5% 38px;
   border-radius: 18px;
-  background: linear-gradient(145deg, #f8f8f8, #e2e2e3 65%, #f2f2f2);
 }
 .workspace-shot {
   min-width: 0;
@@ -117,7 +113,6 @@
 }
 @media (prefers-color-scheme: dark) {
   .workspace-photos {
-    background: linear-gradient(145deg, #111, #2c2c2e 68%, #151515);
   }
   .shot-label {
     color: #ddd;
@@ -149,92 +144,6 @@
     margin-left: 4px;
   }
 }
-.access-platforms {
-  display: flex;
-  justify-content: space-evenly;
-  gap: 10px;
-  flex-wrap: wrap;
-  padding: 22px 0;
-  border-bottom: 1px solid var(--rule);
-}
-.access-platforms a {
-  padding: 7px;
-  font-size: 14px;
-}
-.atlas-home h2 {
-  font-size: clamp(35px, 4vw, 60px);
-  line-height: 1.12;
-}
-.atlas-work,
-.access-host {
-  padding-block: clamp(56px, 7vw, 100px);
-}
-.access-host {
-  border-top: 1px solid var(--rule);
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8%;
-  align-items: center;
-}
-.access-host p {
-  margin: 17px 0;
-}
-.access-host-links a {
-  border-bottom: 1px solid var(--rule);
-  padding: 19px 0;
-  gap: 12px;
-}
-.access-host-links small {
-  margin-left: auto;
-  color: var(--green);
-}
-.access-host-links svg:last-child {
-  width: 16px;
-}
-@media (prefers-color-scheme: dark) {
-  .atlas-home {
-    --paper: var(--bg);
-    --ink: var(--fg);
-    --green: var(--fg);
-    --rule: var(--border);
-  }
-}
-
-@media (max-width: 780px) {
-  .atlas-intro,
-  .access-host {
-    grid-template-columns: 1fr;
-    gap: 22px;
-  }
-  .atlas-pitch {
-    max-width: 540px;
-  }
-  .access-platforms {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 2px;
-  }
-  .access-platforms a {
-    justify-content: center;
-  }
-}
-@media (max-width: 580px) {
-  .atlas-cards {
-    grid-template-columns: 1fr;
-    gap: 30px;
-  }
-  .atlas-intro h1 {
-    font-size: clamp(45px, 11.6vw, 65px);
-  }
-  .atlas-network,
-  .atlas-terminal {
-    height: 195px;
-  }
-  .access-host-links small {
-    font-size: 10px;
-  }
-}
-
 .atlas-hero {
   position: relative;
   isolation: isolate;
@@ -282,5 +191,113 @@
   to {
     opacity: 0.12;
     scale: 1;
+  }
+}
+.workspace-photos {
+  padding: 22px 0 50px;
+  background: transparent;
+}
+.atlas-hero::before {
+  height: clamp(240px, 32vw, 385px);
+}
+.native-metrics dl {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  border-block: 1px solid var(--border);
+  margin: 0;
+}
+.native-metrics dl > div {
+  display: flex;
+  flex-direction: column-reverse;
+  align-items: center;
+  padding: 30px 6px;
+  gap: 7px;
+  border-inline-end: 1px solid var(--border);
+}
+.native-metrics dl > div:last-child {
+  border: 0;
+}
+.native-metrics dt {
+  color: var(--muted);
+  font-size: 13px;
+}
+.native-metrics dd {
+  margin: 0;
+  font-size: clamp(24px, 3vw, 46px);
+  letter-spacing: -0.052em;
+  font-weight: 530;
+  line-height: 1.18;
+}
+.native-metrics > a,
+.native-metrics > span {
+  display: inline-block;
+  margin: 10px 12px 0 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+.native-metrics a:hover {
+  text-decoration: underline;
+}
+.atlas-work {
+  padding-block: clamp(25px, 4vw, 50px);
+  scroll-margin-top: 65px;
+}
+.hero-actions {
+  min-height: 46px;
+}
+.hero-download small {
+  font-size: 11px;
+  opacity: 0.8;
+}
+.hero-download::before {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  inset: -2px;
+  border-radius: inherit;
+  padding: 2px;
+  background: conic-gradient(
+    from var(--glow-angle),
+    transparent 60%,
+    #aaa 75%,
+    #79c476 83%,
+    transparent 95%
+  );
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+}
+@property --glow-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .hero-download::before {
+    animation: ring-glint 3s linear 1;
+  }
+  .hero-download:hover::before,
+  .hero-download:focus-visible::before {
+    animation: ring-glint 2s linear infinite;
+  }
+}
+@keyframes ring-glint {
+  to {
+    --glow-angle: 360deg;
+  }
+}
+@media (max-width: 600px) {
+  .native-metrics dl {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .native-metrics dl > div:nth-child(-n + 2) {
+    border-bottom: 1px solid var(--border);
+  }
+  .workspace-photos {
+    padding-bottom: 30px;
+  }
+  .atlas-intro h1 {
+    font-size: clamp(40px, 11vw, 60px);
   }
 }

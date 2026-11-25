@@ -1,4 +1,5 @@
 "use client";
+import { localizeHref } from "../lib/i18n";
 import { legalLinks } from "../lib/legal";
 import { useLocale, useT } from "./locale";
 import { LocalizedLink as Link } from "./locale";
@@ -6,7 +7,6 @@ import "./site.css";
 import { ArrowUpRight } from "lucide-react";
 import type { ReactNode } from "react";
 import { SiteHeader } from "./site-header";
-import { SupportContact } from "./support-contact";
 
 export function SiteShell({ children }: { children: ReactNode }) {
   const t = useT();
@@ -23,7 +23,8 @@ export function SiteShell({ children }: { children: ReactNode }) {
 }
 export function SiteFooter() {
   const t = useT();
-  const legal = legalLinks(useLocale());
+  const locale = useLocale();
+  const legal = legalLinks(locale);
   return (
     <footer className="site-footer site-width">
       <div className="footer-top">
@@ -32,13 +33,12 @@ export function SiteFooter() {
             ♜ ReignHub
           </Link>
           <p>{t("你的 Agent 聚合工作台。")}</p>
-          <SupportContact className="footer-contact" />
         </div>
         {[
           [
             t("产品"),
             [
-              [t("特性"), "/features"],
+              [t("特性"), localizeHref("/", locale) + "#features"],
               [t("技术栈"), "/technology"],
               [t("价格"), "/pricing"],
               [t("下载"), "/download"],

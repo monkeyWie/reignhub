@@ -4,7 +4,7 @@ import { locales, localizeHref } from "../lib/i18n";
 import { siteOrigin, languageAlternates } from "../lib/seo";
 export default function sitemap(): MetadataRoute.Sitemap {
   if (!siteOrigin) return [];
-  const paths = ["/", "/features", "/technology", "/pricing", "/download"];
+  const paths = ["/", "/technology", "/pricing", "/download"];
   return locales.flatMap((locale) => [
     ...paths.map((path) => ({
       url: siteOrigin + localizeHref(path, locale),

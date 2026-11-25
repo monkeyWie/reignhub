@@ -20,13 +20,18 @@ const config = {
   images: { unoptimized: true },
   poweredByHeader: false,
   redirects() {
-    return ["", "/zh-CN"].flatMap((prefix) =>
-      ["codex-app", "codex-cli"].map((slug) => ({
+    return ["", "/zh-CN"].flatMap((prefix) => [
+      {
+        source: prefix + "/features",
+        destination: (prefix || "/") + "#features",
+        permanent: true,
+      },
+      ...["codex-app", "codex-cli"].map((slug) => ({
         source: `${prefix}/docs/agents/${slug}`,
         destination: `${prefix}/docs/agents/codex`,
         permanent: true,
       })),
-    );
+    ]);
   },
 };
 export default createMDX()(config);

@@ -1,29 +1,14 @@
 ---
-title: Lightweight native performance
-description: An 8.9 MB archive and about 39–48 MiB of memory in demo scenarios. Explore the test setup, method and results.
+title: Native UI performance
+description: macOS arm64 installer size, idle memory and time to the first window.
 ---
 
-## Results
+Measured on November 25, 2026 with ReignHub 1.0.0-dev.20261125.11, Apple M5 and macOS 26.6.
 
-Native UI and the Go core run in one app process, leaving more resources for your agents.
+| Measurement | Result |
+| --- | --- |
+| macOS arm64 DMG | 10,927,104 bytes (10.42 MiB) |
+| Idle physical footprint | 54.3 MiB |
+| Process launch to first visible window | 774 ms median |
 
-| Measurement                          | Result       |
-| ------------------------------------ | ------------ |
-| macOS arm64 compressed download      | **8.9 MB**   |
-| macOS .app size                      | **23.1 MB**  |
-| Idle demo dashboard memory           | **39.5 MiB** |
-| Memory with a demo conversation open | **48.4 MiB** |
-
-## Test setup and method
-
-Measured on November 14, 2026, using an Apple M5 running macOS 26.6, arm64, with standard optimized preview builds.
-
-**Memory**: Start ReignHub in isolated demo mode and warm it up for one minute. Measure the local dashboard and a demo conversation containing Markdown, a code block and a table. Use `vmmap` to capture the ReignHub app process's physical memory footprint, taking the median of five samples per scenario, two seconds apart.
-
-**Package size**: Sum the files in the complete `.app`, then compress the full application as tar.gz to measure the download size.
-
-## Built to stay lightweight
-
-- **NSGo native views** use platform UI without bundling a browser runtime.
-- **The Go core** handles devices, networking, caches and providers directly inside the app.
-- **Virtual message lists and incremental updates** render conversation content on demand and stream new output.
+Five fresh processes opened an isolated demo workspace. The launch timer ran from process creation until WindowServer reported the first visible application window. Samples were 2801, 1165, 653, 774 and 760 ms. The OS file cache remained enabled. After eight seconds at the dashboard in the fifth run, vmmap reported the physical footprint. Agent startup and remote network connections are outside this measurement.

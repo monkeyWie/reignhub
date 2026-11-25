@@ -30,7 +30,7 @@ export default async function Layout({
         }}
         githubUrl="https://github.com/monkeyWie/reignhub"
         links={[
-          { text: t("特性"), url: localizeHref("/features", lang) },
+          { text: t("特性"), url: localizeHref("/", lang) + "#features" },
           { text: t("技术栈"), url: localizeHref("/technology", lang) },
           { text: t("价格"), url: localizeHref("/pricing", lang) },
           { text: t("打开控制台 ↗"), url: "/web" },

@@ -7,7 +7,7 @@ import { gunzipSync } from "node:zlib";
 export async function smokeSite(origin: string) {
   const pending = new Set(
     ["en", "zh-CN"].flatMap((lang) =>
-      ["", "/features", "/technology", "/pricing", "/download", "/docs"].map(
+      ["", "/technology", "/pricing", "/download", "/docs"].map(
         (path) => publicLocalePath(path || "/", lang as "en" | "zh-CN"),
       ),
     ),
@@ -164,7 +164,7 @@ export async function smokeSite(origin: string) {
     );
   }
   assert.equal((await fetch(origin + "/fr/docs")).status, 404);
-  for (const path of ["/", "/docs/quick-start", "/features"]) {
+  for (const path of ["/", "/docs/quick-start", "/download"]) {
     const neutral = await fetch(origin + path, { redirect: "manual" });
     assert.equal(neutral.status, 200, path);
     const chinese = await fetch(origin + path, {

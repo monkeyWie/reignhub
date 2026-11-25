@@ -4,17 +4,17 @@ import { LocalizedLink as Link } from "./locale";
 import { localizeHref, switchLocale } from "../lib/i18n";
 
 import { usePathname } from "next/navigation";
-import { ArrowUpRight, Menu } from "lucide-react";
+import { ThemeButton } from "./site-theme";
+import { Menu } from "lucide-react";
 
 export function SiteHeader() {
   const t = useT();
   const locale = useLocale();
   const pathname = usePathname();
   const links = [
-    ["/features", t("特性")],
-    ["/docs/self-hosting", t("自建服务")],
     ["/docs", t("文档")],
-    ["/pricing", t("价格")],
+    ["https://github.com/monkeyWie/reignhub", "GitHub"],
+    ["/web", t("网页版")],
   ];
   return (
     <header className="site-header">
@@ -60,13 +60,7 @@ export function SiteHeader() {
           >
             {locale === "en" ? "简体中文" : "English"}
           </a>
-          <Link className="site-console-link" href="/web">
-            {t("控制台")}
-            <ArrowUpRight size={14} />
-          </Link>
-          <Link className="button primary site-download-link" href="/download">
-            {t("下载客户端")}
-          </Link>
+          <ThemeButton />
         </div>
         <details className="site-mobile-menu" key={pathname}>
           <summary aria-label={t("展开导航")}>
@@ -84,8 +78,6 @@ export function SiteHeader() {
                 {title}
               </Link>
             ))}
-            <Link href="/download">{t("下载客户端")}</Link>
-            <Link href="/web">{t("打开控制台 ↗")}</Link>
           </nav>
         </details>
       </div>

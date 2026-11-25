@@ -2102,3 +2102,14 @@
     transform: translateX(3px);
   }
 }
+.site-theme-button {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+}
+.site-theme-button:hover {
+  background: var(--hover);
+}
